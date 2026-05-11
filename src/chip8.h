@@ -1,28 +1,39 @@
-#indef CHIP8_H
+#ifndef CHIP8_H
 #define CHIP8_H
 
-struct Chip{
-    unsigned short opcode;
-    unsigned char memory[4096];
-    unsigned char v[16]; // the chip 8 has 15 genral purpose register named from v0 to vE. 
-                         // the 16 register is used for carry flag
+#include <stdint.h>
+#include <stdbool.h>
 
-    unsigned short I;
-    unsigned short pc;
-    /*
-    0x000-0x1FF - Chip 8 interpreter (contains font set in emu)
-    0x050-0x0A0 - Used for the built in 4x5 pixel font set (0-F)
-    0x200-0xFFF - Program ROM and work RAM
-    */
-    unsigned char gfx[64 * 32]; // full name graphics
-                                // total pixels = 2048
+#define VIDEO_WIDTH 64
+#define VIDEO_HEIGHT 32
 
-    unsigned char delay_timer;
-    unsigned char sound_timer;
+typedef struct {
 
-    unsigned short stack[16]; // 16 levels of stack 
-    unsigned short sp; // stack pointer to point to stack
+    uint8_t memory[4096];
 
-    unsigned char keypad[16]; // because the chip8 can only go from 0x0 to 0xf so we get only 16 keypad
+    uint8_t V[16];
 
-} Chip8;
+    uint16_t I;
+    uint16_t pc;
+
+    uint16_t opcode;
+
+    uint16_t stack[16];
+    uint16_t sp;
+
+    uint8_t delay_timer;
+    uint8_t sound_timer;
+
+    uint8_t gfx[VIDEO_WIDTH * VIDEO_HEIGHT];
+
+    uint8_t keypad[16];
+
+    bool draw_flag;
+
+} Chip8; chip8;
+
+void chip8_init(Chip8 *chip8);
+void chip8_load_rom(Chip8 *chip8, const char *filename);
+void chip8_cycle(Chip8 *chip8);
+
+#endif
