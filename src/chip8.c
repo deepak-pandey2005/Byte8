@@ -1,184 +1,280 @@
 #include "chip8.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+void chip8_init(Chip8 *chip8) {
+  memset(chip8, 0, sizeof(Chip8)); // this sets the entire memory to 0
+  /* we can use memset to reset the memory to 0 or
 
-void chip8_init(Chip8 *chip8){
-      memset(chip8,0,sizeof(Chip8)); //this sets the entire memory to 0
-    /* we can use memset to reset the memory to 0 or 
-       
-       for(int i = 0; i < 2048; ++i)
-		       gfx[i] = 0;
+     for(int i = 0; i < 2048; ++i)
+                     gfx[i] = 0;
 
-       we can use like this for all other variables in the struct which we are using as a emulator information*/
+     we can use like this for all other variables in the struct which we are
+     using as a emulator information*/
 
-    Chip8->pc = 0x200; // 0x200-0xFFF - Program ROM and work RAM
+  chip8->pc = 0x200; // 0x200-0xFFF - Program ROM and work RAM
 }
 
-void chip8_load_rom(Chip8 *chip8 , const char *filename)
-{
-    printf("LOADING : %s \n", filename);
-    FILE *file = fopen(filename, "rb"); //opens a file
+void chip8_load_rom(Chip8 *chip8, const char *filename) {
+  printf("LOADING : %s \n", filename);
+  FILE *file = fopen(filename, "rb"); // opens a file
 
-    if (!file){
-        printf("FAILED TO OPEN ROM \n");
-        exit(1);
-    }
-    fseek(file,0, SEEK_END); //move cursor to end of file
-    long size = ftell(file); //get the file size
-    rewind(file); // now it returns to the beggining 
+  if (!file) {
+    printf("FAILED TO OPEN ROM \n");
+    exit(1);
+  }
+  fseek(file, 0, SEEK_END); // move cursor to end of file
+  long size = ftell(file);  // get the file size
+  rewind(file);             // now it returns to the beggining
 
-    //allocate memory to contain the whole file
-    uint8_t *buffer = malloc(size);
-    if (buffer == NULL){
-        fputs("MEMORY ERROR",stderr);
-        exit(1);
-    }
+  printf("ROM SIZE: %ld bytes\n", size);
 
-    //copy the whole file into the buffer
-    size_t result = fread (buffer,1,size,file);
-    if(result != size){
-        fputs("READING ERROR",stderr);
-        exit(1);
-    
-
-    //copy buffer to chip8 memory
-    if(size <=(4096-512)){
-        for(int i = 0 ; i<size ; i++)
-           Chip8->memory[i+ 512] = buffer[i];
-    }
-    else
-    {
-        printf("ERROR ;ROM too big");
-    }
-
-    // close file ,free buffer
+  // CHIP-8 memory limit check (4096 total - 512 reserved)
+  if (size > (4096 - 512)) {
+    printf("ERROR: ROM too large\n");
     fclose(file);
-    free(buffer);
-}
-
-void chip8_cycle(Chip8 *chip8)
-{
-    // fetch opcode
-    Chip8->opcode = Chip8->memory[pc] << 8 | memory[pc + 1]; 
-    /* as one opcode is two byte long we will need to fetch two
-    * succesive byte and merge them to get an actual opcode .*/
-
-    Chip8->pc +=2;
-    // decode opcode
-  switch (Chip8->opcode & 0xF000)
-  {
-        case 0x0000:
-        {
-            switch (chip8->opcode)
-            {
-                case 0x00E0:
-                {
-                    memset(chip8->gfx, 0, sizeof(chip8->gfx));
-                    chip8->draw_flag = true;
-                    break;
-                }
-
-                case 0x00EE:
-                {
-                    chip8->sp--;
-                    chip8->pc = chip8->stack[chip8->sp];
-                    break;
-                }
-            }
-            break;
-        }
-
-  
-        case 0x1000:
-        {
-            uint16_t address = Chip8->opcode & 0x0FFF;
-            Chip8->pc = address;
-            break;
-        } /* this opcode implement the chip8 1NNN instruction which means jump to address NNN */
-
-        case 0x2000:
-        {
-            Chip8->stack[Chip->sp] = Chip->pc;
-            ++sp;
-            Chip8->pc = Chip8->opcode & 0x0FFF;
-            break;
-        } // this opcode calls the sub routine at address NNN
-
-    case 0x6000;
-    {
-       uint8_t vx = (Chip8->opcode & 0x0F00) >> 8;
-
-       uint8_t value = Chip8->opcode & 0x00FF;
-
-       Chip8->v[vx] = value;
- 
-       break;
-    } // this opcode implement the chip8 code which set register vx to value NN
-
-    case 0x0004:
-    {
-      if(chip8->v[(chip8->opcode & 0x00F0) >> 4] > ( 0xFF - chip8->v[(chip8->opcodee & 0x0F00) >> 8]))
-      {
-        chip8->v[0xF] = 1; // carry 
-      }
-      else
-      {
-       chip8->v[0xF] = 0;
-      }
-       chip8->v[(chip8->opcode) >> 8] += chip8->v[(chip8->opcode & 0x00F0) >> 4];
-       pc +=2;
-
-      break;
-    } // this opcode implemnet the chip8 opcode 0x8XY4 this opcode add the value of VY to VX .
-    
-
-    case 0x0033:  
-    {
-     chip8->memory[I]            = chip8->v[(chip8->opcode & 0x0F00) >> 8] /100;
-     chip8->memory[I + 1]        = (chip8->v[(chip8->opcode & 0x0F00) >> 8] 10) %10;
-     chip8->memory[I + 2]        = (chip8->v[(chip8->opcode & 0x0F00) >> 8] %100) % 10;
-     pc +=2 ;
-     break;
-    } // this opcode implement the chip8 opcode 0xFX33 this stores the binary coded decimal representation of VX at addresses of I , I+1 , I+2 
-
-    case 0xD000:
-    {
-     uint8_t x = chip8->v[(chip8->opcode & 0x0F00) >> 8];
-     uint8_t y = chip8->v[(chip8->opcode & 0x00F0) >> 4];
-     uint8_t height = chip8->opcode & 0x000F;
-     
-     v[0xF] = 0;
-     for (int yline= 0; yline < height ; yline++)
-       {
-            uint8_t pixel = chip8->memory[chip8->I + yline];
-            for(xline = 0; xline< 8 ; xline++)
-            {
-               if((pixel & (0x80 >> xline)) != 0 )
-               {
-                 int index = (x + xline) +((y + yline) * VIDEO_WIDTH);
-                   if(chip8->gfx[index] ==1)
-                   {
-                      chip8->v[0xF] =1;
-                   }
-                   chip8->gfx[index] ^= 1;
-               }
-            }
-        }
-      
-      drawFlag = true;
-       break;
-    } // this opcode implement the chip8 opcode 0xDXYN it drwas stripe
-    
-     default:
-     {
-        printf("unknown opcode : 0x%X\n" ,chip8->opcode);
-        break;
-     } 
-
-
-
+    exit(1);
   }
 
+  // Read directly into CHIP-8 memory at 0x200
+  size_t result = fread(&chip8->memory[0x200], 1, size, file);
+
+  if (result != (size_t)size) {
+    printf("READING ERROR\n");
+    fclose(file);
+    exit(1);
+  }
+
+  fclose(file);
+
+  printf("ROM loaded successfully\n");
+}
+
+void chip8_cycle(Chip8 *chip8) {
+
+  /************************************************************
+   * 1. FETCH STAGE
+   * ----------------------------------------------------------
+   * Each CHIP-8 instruction is 2 bytes (16 bits).
+   * We combine two consecutive memory bytes into one opcode.
+   ************************************************************/
+  chip8->opcode =
+      (chip8->memory[chip8->pc] << 8) | chip8->memory[chip8->pc + 1];
+
+  // Move program counter to next instruction
+  chip8->pc += 2;
+
+  /************************************************************
+   * 2. DECODE + EXECUTE
+   * ----------------------------------------------------------
+   * We decode using the highest nibble (first 4 bits)
+   ************************************************************/
+  switch (chip8->opcode & 0xF000) {
+
+  /************************************************************
+   * 0x0000 family
+   ************************************************************/
+  case 0x0000: {
+
+    switch (chip8->opcode & 0x00FF) {
+
+    // 00E0 → Clear screen
+    case 0x00E0:
+      memset(chip8->gfx, 0, sizeof(chip8->gfx));
+      chip8->draw_flag = true;
+      break;
+
+    // 00EE → Return from subroutine
+    case 0x00EE:
+      if (chip8->sp > 0) {
+        chip8->sp--;
+        chip8->pc = chip8->stack[chip8->sp];
+      } else {
+        printf("Stack underflow!\n");
+      }
+      break;
+
+    default:
+      printf("[WARN] Unknown 0x0000 opcode: 0x%X\n", chip8->opcode);
+      break;
+    }
+  } break;
+
+  /************************************************************
+   * 1NNN → Jump to address NNN
+   ************************************************************/
+  case 0x1000:
+    chip8->pc = chip8->opcode & 0x0FFF;
+    break;
+
+  /************************************************************
+   * 2NNN → Call subroutine at NNN
+   ************************************************************/
+  case 0x2000:
+    if (chip8->sp < STACK_SIZE) {
+      chip8->stack[chip8->sp] = chip8->pc;
+      chip8->sp++;
+      chip8->pc = chip8->opcode & 0x0FFF;
+    } else {
+      printf("Stack overflow!\n");
+    }
+    break;
+
+  /************************************************************
+   * 3XNN → Skip next instruction if VX == NN
+   ************************************************************/
+  case 0x3000: {
+    uint8_t vx = (chip8->opcode & 0x0F00) >> 8;
+    uint8_t nn = chip8->opcode & 0x00FF;
+
+    if (chip8->V[vx] == nn)
+      chip8->pc += 2;
+  } break;
+
+  /************************************************************
+   * 4XNN → Skip next instruction if VX != NN
+   ************************************************************/
+  case 0x4000: {
+    uint8_t vx = (chip8->opcode & 0x0F00) >> 8;
+    uint8_t nn = chip8->opcode & 0x00FF;
+
+    if (chip8->V[vx] != nn)
+      chip8->pc += 2;
+  } break;
+
+  /************************************************************
+   * 6XNN → Set VX = NN
+   ************************************************************/
+  case 0x6000: {
+    uint8_t vx = (chip8->opcode & 0x0F00) >> 8;
+    chip8->V[vx] = chip8->opcode & 0x00FF;
+  } break;
+
+  /************************************************************
+   * 7XNN → VX += NN (no carry flag)
+   ************************************************************/
+  case 0x7000: {
+    uint8_t vx = (chip8->opcode & 0x0F00) >> 8;
+    chip8->V[vx] += chip8->opcode & 0x00FF;
+  } break;
+
+  /************************************************************
+   * 8XY* → Arithmetic + logic operations
+   ************************************************************/
+  case 0x8000: {
+
+    uint8_t vx = (chip8->opcode & 0x0F00) >> 8;
+    uint8_t vy = (chip8->opcode & 0x00F0) >> 4;
+
+    switch (chip8->opcode & 0x000F) {
+
+    // 8XY0 → VX = VY
+    case 0x0000:
+      chip8->V[vx] = chip8->V[vy];
+      break;
+
+    // 8XY4 → VX += VY, set VF = carry
+    case 0x0004:
+      chip8->V[0xF] = (chip8->V[vy] > (0xFF - chip8->V[vx])) ? 1 : 0;
+
+      chip8->V[vx] += chip8->V[vy];
+      break;
+
+    // 8XY1 → VX |= VY
+    case 0x0001:
+      chip8->V[vx] |= chip8->V[vy];
+      break;
+
+    // 8XY2 → VX &= VY
+    case 0x0002:
+      chip8->V[vx] &= chip8->V[vy];
+      break;
+
+    // 8XY3 → VX ^= VY
+    case 0x0003:
+      chip8->V[vx] ^= chip8->V[vy];
+      break;
+
+    default:
+      printf("[WARN] Unknown 0x8000 opcode: 0x%X\n", chip8->opcode);
+      break;
+    }
+  } break;
+
+  /************************************************************
+   * ANNN → Set I register
+   ************************************************************/
+  case 0xA000:
+    chip8->I = chip8->opcode & 0x0FFF;
+    break;
+
+  /************************************************************
+   * DXYN → Draw sprite
+   ************************************************************/
+  case 0xD000: {
+
+    uint8_t x = chip8->V[(chip8->opcode & 0x0F00) >> 8];
+    uint8_t y = chip8->V[(chip8->opcode & 0x00F0) >> 4];
+    uint8_t height = chip8->opcode & 0x000F;
+
+    chip8->V[0xF] = 0;
+
+    for (int row = 0; row < height; row++) {
+
+      uint8_t sprite = chip8->memory[chip8->I + row];
+
+      for (int col = 0; col < 8; col++) {
+
+        if (sprite & (0x80 >> col)) {
+
+          int px = (x + col) % VIDEO_WIDTH;
+          int py = (y + row) % VIDEO_HEIGHT;
+
+          int index = px + (py * VIDEO_WIDTH);
+
+          // Collision detection
+          if (chip8->gfx[index] == 1)
+            chip8->V[0xF] = 1;
+
+          chip8->gfx[index] ^= 1;
+        }
+      }
+    }
+
+    chip8->draw_flag = true;
+
+  } break;
+
+  /************************************************************
+   * FX33 → BCD conversion
+   ************************************************************/
+  case 0xF000: {
+
+    switch (chip8->opcode & 0x00FF) {
+
+    case 0x0033: {
+      uint8_t vx = (chip8->opcode & 0x0F00) >> 8;
+      uint8_t value = chip8->V[vx];
+
+      chip8->memory[chip8->I] = value / 100;
+      chip8->memory[chip8->I + 1] = (value / 10) % 10;
+      chip8->memory[chip8->I + 2] = value % 10;
+    } break;
+
+    default:
+      printf("[WARN] Unknown 0xF000 opcode: 0x%X\n", chip8->opcode);
+      break;
+    }
+
+  } break;
+
+  /************************************************************
+   * Unknown opcode fallback
+   ************************************************************/
+  default:
+    printf("[ERROR] Unknown opcode: 0x%X\n", chip8->opcode);
+    break;
+  }
 }
