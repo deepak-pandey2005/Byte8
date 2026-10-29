@@ -1,0 +1,37 @@
+# Compiled Binaries
+chip8
+compiler
+
+# Object files and libraries
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+
+# Dependency files
+*.d
+
+# Debugging / Profiling
+*.dSYM/
+*.su
+*.idb
+*.pdb
+gmon.out
+
+# Build directories
+build/
+bin/
+
+# Editor and IDE artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.directory
+
+# Operating System files
+.DS_Store
+Thumbs.db
+

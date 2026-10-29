@@ -9,8 +9,9 @@ CFLAGS = -Wall -Wextra -std=c99
 # Linker flags (Links the SDL2 library)
 LDFLAGS = -lSDL2
 
-# Target executable name
+# Target executable names
 TARGET = chip8
+COMPILER_TARGET = compiler
 
 # Source files
 SRCS = src/main.c src/chip8.c
@@ -19,13 +20,11 @@ SRCS = src/main.c src/chip8.c
 OBJS = $(SRCS:.c=.o)
 
 # Default rule (runs when you just type 'make')
-all: $(TARGET)
+all: $(TARGET) $(COMPILER_TARGET)
 
-#make compiler 
-Compiler: compliler.c 
-
-#clean compliler
-clean_compiler: rm -rf compliler
+# Rule to build the assembler/compiler
+$(COMPILER_TARGET): compiler.c
+	$(CC) $(CFLAGS) compiler.c -o $(COMPILER_TARGET)
 
 # Rule to link the executable
 $(TARGET): $(OBJS)
@@ -37,7 +36,7 @@ $(TARGET): $(OBJS)
 
 # Clean rule to remove compiled binaries and object files
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET)
 
 # Phony targets (prevents conflicts if files named 'all' or 'clean' exist)
-.PHONY: all clean
+.PHONY: all clean compiler
