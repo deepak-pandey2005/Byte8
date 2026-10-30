@@ -1,0 +1,14 @@
+# Test CHIP-8 Program with labels and comments
+start:
+    cls             ; clear screen
+    v0 = 0x0A       # set v0 = 10
+    v1 = 20
+
+loop:
+    # Jump forward or loop back
+    vF = 1
+    jump loop       // infinite loop back to loop label
+
+end:
+    jump start      ; jump back to start
+
