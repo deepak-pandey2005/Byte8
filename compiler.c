@@ -7,23 +7,50 @@
 #include <ctype.h>
 #include <stdbool.h>
 
-#define MAX_LABELS 256
+#define MAX_LABELS 512
 #define MAX_LABEL_LEN 64
-#define MAX_LINE_LEN 256
+#define MAX_DEFINES 512
+#define MAX_DEFINE_NAME_LEN 64
+#define MAX_DEFINE_VAL_LEN 128
+#define MAX_SOURCE_LINES 4096
+#define MAX_LINE_LEN 512
 #define MAX_BYTES_PER_LINE 32
 #define START_ADDRESS 0x200
 #define MAX_ADDRESS 0x0FFF
+#define MAX_INCLUDE_DEPTH 16
 
 typedef struct {
     char name[MAX_LABEL_LEN];
     uint16_t address;
     int defined_line;
+    char defined_file[128];
 } Label;
 
 typedef struct {
     Label items[MAX_LABELS];
     int count;
 } LabelTable;
+
+typedef struct {
+    char name[MAX_DEFINE_NAME_LEN];
+    char value[MAX_DEFINE_VAL_LEN];
+} Define;
+
+typedef struct {
+    Define items[MAX_DEFINES];
+    int count;
+} DefineTable;
+
+typedef struct {
+    char text[MAX_LINE_LEN];
+    char filename[128];
+    int line_number;
+} SourceLine;
+
+typedef struct {
+    SourceLine lines[MAX_SOURCE_LINES];
+    int count;
+} PreprocessedSource;
 
 // Helper: Trim leading and trailing whitespace
 static char *trim_whitespace(char *str) {
@@ -37,13 +64,24 @@ static char *trim_whitespace(char *str) {
 }
 
 // Helper: Strip comments (starting with ;, #, //, or /* ... */)
+// Preserves # when followed immediately by define or include
 static void strip_comments(char *line) {
+    char *trimmed = line;
+    while (isspace((unsigned char)*trimmed)) trimmed++;
+
+    // Check if line begins with preprocessor directive (#define, #include)
+    bool is_hash_directive = false;
+    if (*trimmed == '#') {
+        if (strncasecmp(trimmed, "#define", 7) == 0 || strncasecmp(trimmed, "#include", 8) == 0) {
+            is_hash_directive = true;
+        }
+    }
+
     // Handle /* ... */ block comments on a line
     char *block_start = strstr(line, "/*");
     while (block_start) {
         char *block_end = strstr(block_start + 2, "*/");
         if (block_end) {
-            // Replace the comment region with spaces to preserve surrounding text
             memset(block_start, ' ', (block_end + 2) - block_start);
             block_start = strstr(block_end + 2, "/*");
         } else {
@@ -54,7 +92,7 @@ static void strip_comments(char *line) {
 
     char *comment = NULL;
     char *c1 = strchr(line, ';');
-    char *c2 = strchr(line, '#');
+    char *c2 = is_hash_directive ? NULL : strchr(line, '#');
     char *c3 = strstr(line, "//");
 
     if (c1) comment = c1;
@@ -66,7 +104,233 @@ static void strip_comments(char *line) {
     }
 }
 
-// Find label by name; returns index or -1 if not found
+// Find define symbol
+static int find_define(const DefineTable *dt, const char *name) {
+    for (int i = 0; i < dt->count; i++) {
+        if (strcmp(dt->items[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Add or update a define
+static bool add_define(DefineTable *dt, const char *name, const char *value, const char *file, int line_num) {
+    if (strlen(name) == 0) {
+        fprintf(stderr, "Error in %s:%d: Empty define name.\n", file, line_num);
+        return false;
+    }
+    if (!isalpha((unsigned char)name[0]) && name[0] != '_') {
+        fprintf(stderr, "Error in %s:%d: Define name '%s' must start with letter or underscore.\n",
+                file, line_num, name);
+        return false;
+    }
+    for (size_t i = 1; i < strlen(name); i++) {
+        if (!isalnum((unsigned char)name[i]) && name[i] != '_') {
+            fprintf(stderr, "Error in %s:%d: Invalid character in define name '%s'.\n",
+                    file, line_num, name);
+            return false;
+        }
+    }
+
+    int idx = find_define(dt, name);
+    if (idx != -1) {
+        strncpy(dt->items[idx].value, value, MAX_DEFINE_VAL_LEN - 1);
+        dt->items[idx].value[MAX_DEFINE_VAL_LEN - 1] = '\0';
+        return true;
+    }
+
+    if (dt->count >= MAX_DEFINES) {
+        fprintf(stderr, "Error in %s:%d: Maximum defines limit reached (%d).\n", file, line_num, MAX_DEFINES);
+        return false;
+    }
+
+    strncpy(dt->items[dt->count].name, name, MAX_DEFINE_NAME_LEN - 1);
+    dt->items[dt->count].name[MAX_DEFINE_NAME_LEN - 1] = '\0';
+    strncpy(dt->items[dt->count].value, value, MAX_DEFINE_VAL_LEN - 1);
+    dt->items[dt->count].value[MAX_DEFINE_VAL_LEN - 1] = '\0';
+    dt->count++;
+    return true;
+}
+
+// Substitute defines in a line (word-boundary replacement)
+static void expand_defines_in_line(char *line, const DefineTable *dt) {
+    if (dt->count == 0) return;
+
+    char result[MAX_LINE_LEN];
+    result[0] = '\0';
+
+    char *src = line;
+    char *dst = result;
+    size_t remaining = sizeof(result) - 1;
+
+    while (*src && remaining > 0) {
+        if (isalpha((unsigned char)*src) || *src == '_') {
+            char word[MAX_DEFINE_NAME_LEN];
+            int wlen = 0;
+            while ((isalnum((unsigned char)*src) || *src == '_') && wlen < (int)sizeof(word) - 1) {
+                word[wlen++] = *src++;
+            }
+            word[wlen] = '\0';
+
+            int def_idx = find_define(dt, word);
+            if (def_idx != -1) {
+                const char *val = dt->items[def_idx].value;
+                size_t vlen = strlen(val);
+                if (vlen > remaining) vlen = remaining;
+                memcpy(dst, val, vlen);
+                dst += vlen;
+                remaining -= vlen;
+            } else {
+                if ((size_t)wlen > remaining) wlen = (int)remaining;
+                memcpy(dst, word, wlen);
+                dst += wlen;
+                remaining -= wlen;
+            }
+        } else {
+            *dst++ = *src++;
+            remaining--;
+        }
+    }
+    *dst = '\0';
+    strncpy(line, result, MAX_LINE_LEN - 1);
+    line[MAX_LINE_LEN - 1] = '\0';
+}
+
+// Preprocessor: handles #include, %include, #define, const
+static bool preprocess_file(const char *filename, PreprocessedSource *ps, DefineTable *dt, int depth) {
+    if (depth > MAX_INCLUDE_DEPTH) {
+        fprintf(stderr, "Error: Exceeded maximum include recursion depth (%d) in '%s'.\n", MAX_INCLUDE_DEPTH, filename);
+        return false;
+    }
+
+    FILE *f = fopen(filename, "r");
+    if (!f) {
+        fprintf(stderr, "Error: Could not open file '%s'.\n", filename);
+        return false;
+    }
+
+    char raw_buf[MAX_LINE_LEN];
+    int line_num = 0;
+
+    // Determine directory of current file for relative includes
+    char base_dir[256] = "";
+    const char *last_slash = strrchr(filename, '/');
+    if (last_slash) {
+        size_t dirlen = last_slash - filename + 1;
+        if (dirlen < sizeof(base_dir)) {
+            strncpy(base_dir, filename, dirlen);
+            base_dir[dirlen] = '\0';
+        }
+    }
+
+    while (fgets(raw_buf, sizeof(raw_buf), f)) {
+        line_num++;
+        strip_comments(raw_buf);
+        char *line = trim_whitespace(raw_buf);
+        if (*line == '\0') continue;
+
+        // Check for #include "file" or %include "file"
+        if (strncasecmp(line, "#include", 8) == 0 || strncasecmp(line, "%include", 8) == 0) {
+            char *quote_start = strchr(line, '"');
+            if (!quote_start) quote_start = strchr(line, '<');
+            char *quote_end = quote_start ? strchr(quote_start + 1, (quote_start[0] == '<' ? '>' : '"')) : NULL;
+
+            if (!quote_start || !quote_end) {
+                fprintf(stderr, "Error in %s:%d: Expected #include \"filename.txt\"\n", filename, line_num);
+                fclose(f);
+                return false;
+            }
+
+            char inc_name[128];
+            size_t nlen = quote_end - (quote_start + 1);
+            if (nlen >= sizeof(inc_name)) nlen = sizeof(inc_name) - 1;
+            strncpy(inc_name, quote_start + 1, nlen);
+            inc_name[nlen] = '\0';
+
+            char full_path[512];
+            if (inc_name[0] == '/' || strlen(base_dir) == 0) {
+                snprintf(full_path, sizeof(full_path), "%s", inc_name);
+            } else {
+                snprintf(full_path, sizeof(full_path), "%s%s", base_dir, inc_name);
+            }
+
+            if (!preprocess_file(full_path, ps, dt, depth + 1)) {
+                fclose(f);
+                return false;
+            }
+            continue;
+        }
+
+        // Check for #define NAME VALUE or const NAME = VALUE
+        if (strncasecmp(line, "#define", 7) == 0) {
+            char def_name[MAX_DEFINE_NAME_LEN];
+            char def_val[MAX_DEFINE_VAL_LEN];
+            def_name[0] = '\0';
+            def_val[0] = '\0';
+            if (sscanf(line + 7, "%63s %127[^\n]", def_name, def_val) >= 1) {
+                char *v = trim_whitespace(def_val);
+                expand_defines_in_line(v, dt);
+                if (!add_define(dt, def_name, v, filename, line_num)) {
+                    fclose(f);
+                    return false;
+                }
+            } else {
+                fprintf(stderr, "Error in %s:%d: Invalid #define syntax. Usage: #define NAME VALUE\n", filename, line_num);
+                fclose(f);
+                return false;
+            }
+            continue;
+        }
+
+        if (strncasecmp(line, "const ", 6) == 0) {
+            char def_name[MAX_DEFINE_NAME_LEN];
+            char *eq = strchr(line + 6, '=');
+            if (eq) {
+                int nlen = eq - (line + 6);
+                if (nlen >= (int)sizeof(def_name)) nlen = (int)sizeof(def_name) - 1;
+                memcpy(def_name, line + 6, nlen);
+                def_name[nlen] = '\0';
+                char *clean_name = trim_whitespace(def_name);
+
+                char val_buf[MAX_DEFINE_VAL_LEN];
+                strncpy(val_buf, trim_whitespace(eq + 1), sizeof(val_buf) - 1);
+                val_buf[sizeof(val_buf) - 1] = '\0';
+                expand_defines_in_line(val_buf, dt);
+
+                if (!add_define(dt, clean_name, val_buf, filename, line_num)) {
+                    fclose(f);
+                    return false;
+                }
+            } else {
+                fprintf(stderr, "Error in %s:%d: Invalid const syntax. Usage: const NAME = VALUE\n", filename, line_num);
+                fclose(f);
+                return false;
+            }
+            continue;
+        }
+
+        // Normal assembly line: expand defines
+        expand_defines_in_line(line, dt);
+
+        if (ps->count >= MAX_SOURCE_LINES) {
+            fprintf(stderr, "Error: Maximum source line limit (%d) reached.\n", MAX_SOURCE_LINES);
+            fclose(f);
+            return false;
+        }
+
+        strncpy(ps->lines[ps->count].text, line, MAX_LINE_LEN - 1);
+        ps->lines[ps->count].text[MAX_LINE_LEN - 1] = '\0';
+        strncpy(ps->lines[ps->count].filename, filename, sizeof(ps->lines[0].filename) - 1);
+        ps->lines[ps->count].line_number = line_num;
+        ps->count++;
+    }
+
+    fclose(f);
+    return true;
+}
+
+// Find label by name
 static int find_label(const LabelTable *table, const char *name) {
     for (int i = 0; i < table->count; i++) {
         if (strcmp(table->items[i].name, name) == 0) {
@@ -76,39 +340,38 @@ static int find_label(const LabelTable *table, const char *name) {
     return -1;
 }
 
-// Add a label to the symbol table
-static bool add_label(LabelTable *table, const char *name, uint16_t address, int line_num) {
+// Add a label to symbol table
+static bool add_label(LabelTable *table, const char *name, uint16_t address, const char *file, int line_num) {
     if (strlen(name) == 0) {
-        fprintf(stderr, "Error at line %d: Empty label name.\n", line_num);
+        fprintf(stderr, "Error in %s:%d: Empty label name.\n", file, line_num);
         return false;
     }
     if (strlen(name) >= MAX_LABEL_LEN) {
-        fprintf(stderr, "Error at line %d: Label name '%s' exceeds max length of %d.\n",
-                line_num, name, MAX_LABEL_LEN - 1);
+        fprintf(stderr, "Error in %s:%d: Label name '%s' exceeds max length of %d.\n",
+                file, line_num, name, MAX_LABEL_LEN - 1);
         return false;
     }
-    // Check validity of label characters (must start with alpha/underscore)
     if (!isalpha((unsigned char)name[0]) && name[0] != '_') {
-        fprintf(stderr, "Error at line %d: Label '%s' must start with a letter or underscore.\n",
-                line_num, name);
+        fprintf(stderr, "Error in %s:%d: Label '%s' must start with a letter or underscore.\n",
+                file, line_num, name);
         return false;
     }
     for (size_t i = 1; i < strlen(name); i++) {
         if (!isalnum((unsigned char)name[i]) && name[i] != '_') {
-            fprintf(stderr, "Error at line %d: Label '%s' contains invalid character '%c'.\n",
-                    line_num, name, name[i]);
+            fprintf(stderr, "Error in %s:%d: Label '%s' contains invalid character '%c'.\n",
+                    file, line_num, name, name[i]);
             return false;
         }
     }
 
     if (find_label(table, name) != -1) {
-        fprintf(stderr, "Error at line %d: Label '%s' already defined.\n", line_num, name);
+        fprintf(stderr, "Error in %s:%d: Label '%s' already defined.\n", file, line_num, name);
         return false;
     }
 
     if (table->count >= MAX_LABELS) {
-        fprintf(stderr, "Error at line %d: Maximum label count (%d) exceeded.\n",
-                line_num, MAX_LABELS);
+        fprintf(stderr, "Error in %s:%d: Maximum label count (%d) exceeded.\n",
+                file, line_num, MAX_LABELS);
         return false;
     }
 
@@ -116,6 +379,7 @@ static bool add_label(LabelTable *table, const char *name, uint16_t address, int
     table->items[table->count].name[MAX_LABEL_LEN - 1] = '\0';
     table->items[table->count].address = address;
     table->items[table->count].defined_line = line_num;
+    strncpy(table->items[table->count].defined_file, file, sizeof(table->items[0].defined_file) - 1);
     table->count++;
     return true;
 }
@@ -125,7 +389,6 @@ static bool parse_number(const char *str, long *out_val) {
     char *trimmed = trim_whitespace((char *)str);
     if (!trimmed || *trimmed == '\0') return false;
 
-    // Binary literal (0b... or 0B...)
     if ((strncasecmp(trimmed, "0b", 2) == 0) && strlen(trimmed) > 2) {
         char *endptr = NULL;
         long val = strtol(trimmed + 2, &endptr, 2);
@@ -136,7 +399,6 @@ static bool parse_number(const char *str, long *out_val) {
         return false;
     }
 
-    // Hex or decimal (strtol with base 0 automatically handles 0x for hex)
     char *endptr = NULL;
     long val = strtol(trimmed, &endptr, 0);
     if (endptr != trimmed && *endptr == '\0') {
@@ -147,27 +409,26 @@ static bool parse_number(const char *str, long *out_val) {
     return false;
 }
 
-// Resolves a target string (e.g. "loop", "0x200", "512") into a 12-bit address
-static bool resolve_address(const char *target, const LabelTable *table, uint16_t *out_addr, int line_num) {
+// Resolves a target string into a 12-bit address
+static bool resolve_address(const char *target, const LabelTable *table, uint16_t *out_addr, const char *file, int line_num) {
     long num;
     if (parse_number(target, &num)) {
         if (num < 0 || num > MAX_ADDRESS) {
-            fprintf(stderr, "Error at line %d: Memory address 0x%lX out of bounds (0x000-0x%03X).\n",
-                    line_num, num, MAX_ADDRESS);
+            fprintf(stderr, "Error in %s:%d: Memory address 0x%lX out of bounds (0x000-0x%03X).\n",
+                    file, line_num, num, MAX_ADDRESS);
             return false;
         }
         *out_addr = (uint16_t)num;
         return true;
     }
 
-    // Look up in label table
     int idx = find_label(table, target);
     if (idx != -1) {
         *out_addr = table->items[idx].address;
         return true;
     }
 
-    fprintf(stderr, "Error at line %d: Undefined label or invalid address '%s'.\n", line_num, target);
+    fprintf(stderr, "Error in %s:%d: Undefined label or invalid address '%s'.\n", file, line_num, target);
     return false;
 }
 
@@ -190,7 +451,7 @@ static int parse_register(const char *reg_str) {
 }
 
 // Checks if a line is a data byte directive ("db" or "byte") and counts bytes
-static int get_data_byte_count(const char *instr, int line_num) {
+static int get_data_byte_count(const char *instr, const char *file, int line_num) {
     char copy[MAX_LINE_LEN];
     strncpy(copy, instr, sizeof(copy) - 1);
     copy[sizeof(copy) - 1] = '\0';
@@ -199,7 +460,7 @@ static int get_data_byte_count(const char *instr, int line_num) {
     if (!tok) return 0;
 
     if (strcasecmp(tok, "db") != 0 && strcasecmp(tok, "byte") != 0) {
-        return -1; // Not a db directive
+        return -1;
     }
 
     int count = 0;
@@ -208,28 +469,24 @@ static int get_data_byte_count(const char *instr, int line_num) {
         if (*tok == '\0') continue;
         long val;
         if (!parse_number(tok, &val) || val < 0 || val > 255) {
-            fprintf(stderr, "Error at line %d: Invalid byte value '%s' in db directive.\n", line_num, tok);
-            return -2; // Parsing error
+            fprintf(stderr, "Error in %s:%d: Invalid byte value '%s' in db directive.\n", file, line_num, tok);
+            return -2;
         }
         count++;
     }
 
     if (count == 0) {
-        fprintf(stderr, "Error at line %d: 'db' directive requires at least one byte value.\n", line_num);
+        fprintf(stderr, "Error in %s:%d: 'db' directive requires at least one byte value.\n", file, line_num);
         return -2;
     }
 
     return count;
 }
 
-// Parses an instruction or directive into machine bytes (1 to MAX_BYTES_PER_LINE bytes)
-// Returns number of bytes generated (> 0), or -1 on error.
-static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes, int line_num) {
+// Parses an instruction or directive into machine bytes
+static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes, const char *file, int line_num) {
     line = trim_whitespace(line);
 
-    // ----------------------------------------------------
-    // Directives: db / byte (raw data)
-    // ----------------------------------------------------
     if (strncasecmp(line, "db ", 3) == 0 || strncasecmp(line, "byte ", 5) == 0 ||
         strcasecmp(line, "db") == 0 || strcasecmp(line, "byte") == 0) {
         char copy[MAX_LINE_LEN];
@@ -243,13 +500,13 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
             if (*tok == '\0') continue;
             long val;
             if (!parse_number(tok, &val) || val < 0 || val > 255) {
-                fprintf(stderr, "Error at line %d: Invalid byte value '%s'.\n", line_num, tok);
+                fprintf(stderr, "Error in %s:%d: Invalid byte value '%s'.\n", file, line_num, tok);
                 return -1;
             }
             out_bytes[count++] = (uint8_t)val;
         }
         if (count == 0) {
-            fprintf(stderr, "Error at line %d: Empty db directive.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Empty db directive.\n", file, line_num);
             return -1;
         }
         return count;
@@ -257,92 +514,65 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
 
     uint16_t op = 0;
 
-    // ----------------------------------------------------
-    // 00E0 / 00EE
-    // ----------------------------------------------------
     if (strcasecmp(line, "cls") == 0) {
         op = 0x00E0;
     } else if (strcasecmp(line, "ret") == 0 || strcasecmp(line, "return") == 0) {
         op = 0x00EE;
-    }
-
-    // ----------------------------------------------------
-    // 1NNN: jump / jp <target>
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "jump ", 5) == 0 || strncasecmp(line, "jp ", 3) == 0) {
+    } else if (strncasecmp(line, "jump ", 5) == 0 || strncasecmp(line, "jp ", 3) == 0) {
         char target[MAX_LABEL_LEN];
         const char *arg = (strncasecmp(line, "jump ", 5) == 0) ? line + 5 : line + 3;
         if (sscanf(arg, "%63s", target) == 1) {
             uint16_t addr = 0;
-            if (!resolve_address(target, table, &addr, line_num)) return -1;
+            if (!resolve_address(target, table, &addr, file, line_num)) return -1;
             op = 0x1000 | (addr & 0x0FFF);
         } else {
-            fprintf(stderr, "Syntax Error at line %d: Missing jump target.\n", line_num);
+            fprintf(stderr, "Syntax Error in %s:%d: Missing jump target.\n", file, line_num);
             return -1;
         }
-    }
-
-    // ----------------------------------------------------
-    // 2NNN: call <target>
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "call ", 5) == 0) {
+    } else if (strncasecmp(line, "call ", 5) == 0) {
         char target[MAX_LABEL_LEN];
         if (sscanf(line + 5, "%63s", target) == 1) {
             uint16_t addr = 0;
-            if (!resolve_address(target, table, &addr, line_num)) return -1;
+            if (!resolve_address(target, table, &addr, file, line_num)) return -1;
             op = 0x2000 | (addr & 0x0FFF);
         } else {
-            fprintf(stderr, "Syntax Error at line %d: Missing call target.\n", line_num);
+            fprintf(stderr, "Syntax Error in %s:%d: Missing call target.\n", file, line_num);
             return -1;
         }
-    }
-
-    // ----------------------------------------------------
-    // BNNN: jump v0 + NNN / jp v0, NNN
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "jump v0 +", 9) == 0 || strncasecmp(line, "jp v0,", 6) == 0) {
+    } else if (strncasecmp(line, "jump v0 +", 9) == 0 || strncasecmp(line, "jp v0,", 6) == 0) {
         char target[MAX_LABEL_LEN];
         const char *arg = strchr(line, (strchr(line, '+') ? '+' : ','));
         if (arg && sscanf(arg + 1, "%63s", target) == 1) {
             uint16_t addr = 0;
-            if (!resolve_address(target, table, &addr, line_num)) return -1;
+            if (!resolve_address(target, table, &addr, file, line_num)) return -1;
             op = 0xB000 | (addr & 0x0FFF);
         } else {
-            fprintf(stderr, "Syntax Error at line %d: Invalid jump with V0 syntax.\n", line_num);
+            fprintf(stderr, "Syntax Error in %s:%d: Invalid jump with V0 syntax.\n", file, line_num);
             return -1;
         }
-    }
-
-    // ----------------------------------------------------
-    // Conditionals: 3XNN, 4XNN, 5XY0, 9XY0
-    // "if vX == NN", "if vX != NN", "if vX == vY", "if vX != vY"
-    // Also standard mnemonics: "se vX, NN/vY", "sne vX, NN/vY"
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "if ", 3) == 0) {
+    } else if (strncasecmp(line, "if ", 3) == 0) {
         char r1[32], op_str[8], r2[64];
         if (sscanf(line + 3, "%31s %7s %63s", r1, op_str, r2) == 3) {
             int vx = parse_register(r1);
             if (vx == -1) {
-                fprintf(stderr, "Error at line %d: Invalid register '%s'.\n", line_num, r1);
+                fprintf(stderr, "Error in %s:%d: Invalid register '%s'.\n", file, line_num, r1);
                 return -1;
             }
 
             int vy = parse_register(r2);
             if (vy != -1) {
-                // Register-register comparison: 5XY0 or 9XY0
                 if (strcmp(op_str, "==") == 0) {
                     op = 0x5000 | (vx << 8) | (vy << 4);
                 } else if (strcmp(op_str, "!=") == 0) {
                     op = 0x9000 | (vx << 8) | (vy << 4);
                 } else {
-                    fprintf(stderr, "Syntax Error at line %d: Expected '==' or '!=' in conditional.\n", line_num);
+                    fprintf(stderr, "Syntax Error in %s:%d: Expected '==' or '!=' in conditional.\n", file, line_num);
                     return -1;
                 }
             } else {
-                // Register-immediate comparison: 3XNN or 4XNN
                 long val;
                 if (!parse_number(r2, &val) || val < 0 || val > 255) {
-                    fprintf(stderr, "Error at line %d: Value '%s' out of bounds (0-255).\n", line_num, r2);
+                    fprintf(stderr, "Error in %s:%d: Value '%s' out of bounds (0-255).\n", file, line_num, r2);
                     return -1;
                 }
                 if (strcmp(op_str, "==") == 0) {
@@ -350,25 +580,19 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                 } else if (strcmp(op_str, "!=") == 0) {
                     op = 0x4000 | (vx << 8) | ((uint8_t)val & 0xFF);
                 } else {
-                    fprintf(stderr, "Syntax Error at line %d: Expected '==' or '!=' in conditional.\n", line_num);
+                    fprintf(stderr, "Syntax Error in %s:%d: Expected '==' or '!=' in conditional.\n", file, line_num);
                     return -1;
                 }
             }
         } else {
-            fprintf(stderr, "Syntax Error at line %d: Invalid if statement '%s'.\n", line_num, line);
+            fprintf(stderr, "Syntax Error in %s:%d: Invalid if statement '%s'.\n", file, line_num, line);
             return -1;
         }
-    }
-
-    // ----------------------------------------------------
-    // Key-skip instructions: EX9E, EXA1
-    // "skip_key vX", "skip_nkey vX", "skp vX", "sknp vX"
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "skip_key ", 9) == 0 || strncasecmp(line, "skp ", 4) == 0) {
+    } else if (strncasecmp(line, "skip_key ", 9) == 0 || strncasecmp(line, "skp ", 4) == 0) {
         const char *arg = (strncasecmp(line, "skip_key ", 9) == 0) ? line + 9 : line + 4;
         int vx = parse_register(trim_whitespace((char *)arg));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register in skip_key.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register in skip_key.\n", file, line_num);
             return -1;
         }
         op = 0xE09E | (vx << 8);
@@ -376,17 +600,11 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
         const char *arg = (strncasecmp(line, "skip_nkey ", 10) == 0) ? line + 10 : line + 5;
         int vx = parse_register(trim_whitespace((char *)arg));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register in skip_nkey.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register in skip_nkey.\n", file, line_num);
             return -1;
         }
         op = 0xE0A1 | (vx << 8);
-    }
-
-    // ----------------------------------------------------
-    // Graphics: DXYN
-    // "draw vX, vY, N" or "drw vX, vY, N"
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "draw ", 5) == 0 || strncasecmp(line, "drw ", 4) == 0) {
+    } else if (strncasecmp(line, "draw ", 5) == 0 || strncasecmp(line, "drw ", 4) == 0) {
         char rx[32], ry[32], rn[32];
         const char *args = (strncasecmp(line, "draw ", 5) == 0) ? line + 5 : line + 4;
         if (sscanf(args, " %31[^,], %31[^,], %31s", rx, ry, rn) == 3) {
@@ -394,53 +612,39 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
             int vy = parse_register(trim_whitespace(ry));
             long n;
             if (vx == -1 || vy == -1 || !parse_number(rn, &n) || n < 0 || n > 15) {
-                fprintf(stderr, "Syntax Error at line %d: Invalid arguments to draw (vX, vY, 0-15).\n", line_num);
+                fprintf(stderr, "Syntax Error in %s:%d: Invalid arguments to draw (vX, vY, 0-15).\n", file, line_num);
                 return -1;
             }
             op = 0xD000 | (vx << 8) | (vy << 4) | ((uint8_t)n & 0x0F);
         } else {
-            fprintf(stderr, "Syntax Error at line %d: Usage: draw vX, vY, N\n", line_num);
+            fprintf(stderr, "Syntax Error in %s:%d: Usage: draw vX, vY, N\n", file, line_num);
             return -1;
         }
-    }
-
-    // ----------------------------------------------------
-    // Timers & FX instructions where destination is timer:
-    // "delay = vX" (FX15), "sound = vX" (FX18)
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "delay = ", 8) == 0) {
+    } else if (strncasecmp(line, "delay = ", 8) == 0) {
         int vx = parse_register(trim_whitespace(line + 8));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register in 'delay = vX'.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register in 'delay = vX'.\n", file, line_num);
             return -1;
         }
         op = 0xF015 | (vx << 8);
     } else if (strncasecmp(line, "sound = ", 8) == 0) {
         int vx = parse_register(trim_whitespace(line + 8));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register in 'sound = vX'.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register in 'sound = vX'.\n", file, line_num);
             return -1;
         }
         op = 0xF018 | (vx << 8);
-    }
-
-    // ----------------------------------------------------
-    // Index Register operations: ANNN, FX1E, FX29
-    // "i = <addr|label>" (ANNN)
-    // "i += vX" (FX1E)
-    // "i = font vX" (FX29)
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "i = font ", 9) == 0) {
+    } else if (strncasecmp(line, "i = font ", 9) == 0) {
         int vx = parse_register(trim_whitespace(line + 9));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register for 'i = font vX'.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register for 'i = font vX'.\n", file, line_num);
             return -1;
         }
         op = 0xF029 | (vx << 8);
     } else if (strncasecmp(line, "i += ", 5) == 0) {
         int vx = parse_register(trim_whitespace(line + 5));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register in 'i += vX'.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register in 'i += vX'.\n", file, line_num);
             return -1;
         }
         op = 0xF01E | (vx << 8);
@@ -448,24 +652,16 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
         char target[MAX_LABEL_LEN];
         if (sscanf(line + 4, "%63s", target) == 1) {
             uint16_t addr = 0;
-            if (!resolve_address(target, table, &addr, line_num)) return -1;
+            if (!resolve_address(target, table, &addr, file, line_num)) return -1;
             op = 0xA000 | (addr & 0x0FFF);
         } else {
-            fprintf(stderr, "Syntax Error at line %d: Missing address for 'i = ...'.\n", line_num);
+            fprintf(stderr, "Syntax Error in %s:%d: Missing address for 'i = ...'.\n", file, line_num);
             return -1;
         }
-    }
-
-    // ----------------------------------------------------
-    // Single-word helpers:
-    // "bcd vX" (FX33)
-    // "save vX" / "dump vX" (FX55)
-    // "load vX" / "restore vX" (FX65)
-    // ----------------------------------------------------
-    else if (strncasecmp(line, "bcd ", 4) == 0) {
-        int vx = parse_register(trim_whitespace(line + 4));
+    } else if (strcasecmp(line, "bcd") == 0 || strncasecmp(line, "bcd ", 4) == 0) {
+        int vx = parse_register(trim_whitespace(line + 3));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register for bcd.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register for bcd.\n", file, line_num);
             return -1;
         }
         op = 0xF033 | (vx << 8);
@@ -473,7 +669,7 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
         const char *arg = (strncasecmp(line, "save ", 5) == 0) ? line + 5 : line + 5;
         int vx = parse_register(trim_whitespace((char *)arg));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register for save/dump.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register for save/dump.\n", file, line_num);
             return -1;
         }
         op = 0xF055 | (vx << 8);
@@ -481,31 +677,11 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
         const char *arg = (strncasecmp(line, "load ", 5) == 0) ? line + 5 : line + 8;
         int vx = parse_register(trim_whitespace((char *)arg));
         if (vx == -1) {
-            fprintf(stderr, "Error at line %d: Invalid register for load/restore.\n", line_num);
+            fprintf(stderr, "Error in %s:%d: Invalid register for load/restore.\n", file, line_num);
             return -1;
         }
         op = 0xF065 | (vx << 8);
-    }
-
-    // ----------------------------------------------------
-    // Register arithmetic, assignment, and special FX:
-    // "vX = delay" (FX07)
-    // "vX = key" (FX0A)
-    // "vX = rand NN" (CXNN)
-    // "vX = vY - vX" (8XY7)
-    // "vX = vY" (8XY0)
-    // "vX = NN" (6XNN)
-    // "vX += NN" (7XNN)
-    // "vX += vY" (8XY4)
-    // "vX -= vY" (8XY5)
-    // "vX |= vY" (8XY1)
-    // "vX &= vY" (8XY2)
-    // "vX ^= vY" (8XY3)
-    // "vX >>= 1" or "vX >> 1" (8XY6)
-    // "vX <<= 1" or "vX << 1" (8XYE)
-    // ----------------------------------------------------
-    else if ((line[0] == 'v' || line[0] == 'V')) {
-        // Shift operators: vX >>= 1 / vX <<= 1
+    } else if ((line[0] == 'v' || line[0] == 'V')) {
         char r_name[32], op_sym[16], shift_amt[16];
         if (sscanf(line, "%31s %15s %15s", r_name, op_sym, shift_amt) == 3 &&
             (strcmp(op_sym, ">>=") == 0 || strcmp(op_sym, ">>") == 0 ||
@@ -518,13 +694,10 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                     op = 0x800E | (vx << 8);
                 }
             } else {
-                fprintf(stderr, "Error at line %d: Invalid register '%s'.\n", line_num, r_name);
+                fprintf(stderr, "Error in %s:%d: Invalid register '%s'.\n", file, line_num, r_name);
                 return -1;
             }
-        }
-        // Compound assignments: vX += ..., vX -= ..., vX |= ..., vX &= ..., vX ^= ...
-        else if (sscanf(line, "%31s %15s %63[^\n]", r_name, op_sym, line + 150) >= 2) {
-            // Read target RHS
+        } else if (sscanf(line, "%31s %15s %63[^\n]", r_name, op_sym, line + 150) >= 2) {
             char rhs[64];
             char *eq_ptr = strchr(line, '=');
             char *op_ptr = NULL;
@@ -539,7 +712,7 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
             if (op_ptr) {
                 int vx = parse_register(r_name);
                 if (vx == -1) {
-                    fprintf(stderr, "Error at line %d: Invalid register '%s'.\n", line_num, r_name);
+                    fprintf(stderr, "Error in %s:%d: Invalid register '%s'.\n", file, line_num, r_name);
                     return -1;
                 }
 
@@ -547,27 +720,19 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                 strncpy(rhs, trim_whitespace(rhs_raw), sizeof(rhs) - 1);
                 rhs[sizeof(rhs) - 1] = '\0';
 
-                // Check assignment operator
                 if (op_ptr == eq_ptr) {
-                    // "vX = delay" (FX07)
                     if (strcasecmp(rhs, "delay") == 0) {
                         op = 0xF007 | (vx << 8);
-                    }
-                    // "vX = key" (FX0A)
-                    else if (strcasecmp(rhs, "key") == 0) {
+                    } else if (strcasecmp(rhs, "key") == 0) {
                         op = 0xF00A | (vx << 8);
-                    }
-                    // "vX = rand NN" (CXNN)
-                    else if (strncasecmp(rhs, "rand ", 5) == 0) {
+                    } else if (strncasecmp(rhs, "rand ", 5) == 0) {
                         long mask;
                         if (!parse_number(rhs + 5, &mask) || mask < 0 || mask > 255) {
-                            fprintf(stderr, "Error at line %d: Invalid mask for rand.\n", line_num);
+                            fprintf(stderr, "Error in %s:%d: Invalid mask for rand.\n", file, line_num);
                             return -1;
                         }
                         op = 0xC000 | (vx << 8) | ((uint8_t)mask & 0xFF);
-                    }
-                    // "vX = vY - vX" (8XY7)
-                    else if (strstr(rhs, "-")) {
+                    } else if (strstr(rhs, "-")) {
                         char vy_name[32], vx_sub[32];
                         if (sscanf(rhs, "%31s - %31s", vy_name, vx_sub) == 2) {
                             int vy = parse_register(vy_name);
@@ -575,21 +740,17 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                             if (vy != -1 && vx2 == vx) {
                                 op = 0x8007 | (vx << 8) | (vy << 4);
                             } else {
-                                fprintf(stderr, "Syntax Error at line %d: Expected format 'vX = vY - vX'.\n", line_num);
+                                fprintf(stderr, "Syntax Error in %s:%d: Expected format 'vX = vY - vX'.\n", file, line_num);
                                 return -1;
                             }
                         }
-                    }
-                    // "vX = vY" (8XY0)
-                    else if (parse_register(rhs) != -1) {
+                    } else if (parse_register(rhs) != -1) {
                         int vy = parse_register(rhs);
                         op = 0x8000 | (vx << 8) | (vy << 4);
-                    }
-                    // "vX = NN" (6XNN)
-                    else {
+                    } else {
                         long imm;
                         if (!parse_number(rhs, &imm) || imm < 0 || imm > 255) {
-                            fprintf(stderr, "Error at line %d: Value '%s' out of bounds (0-255).\n", line_num, rhs);
+                            fprintf(stderr, "Error in %s:%d: Value '%s' out of bounds (0-255).\n", file, line_num, rhs);
                             return -1;
                         }
                         op = 0x6000 | (vx << 8) | ((uint8_t)imm & 0xFF);
@@ -597,13 +758,11 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                 } else if (strncmp(op_ptr, "+=", 2) == 0) {
                     int vy = parse_register(rhs);
                     if (vy != -1) {
-                        // 8XY4: vX += vY
                         op = 0x8004 | (vx << 8) | (vy << 4);
                     } else {
-                        // 7XNN: vX += NN
                         long imm;
                         if (!parse_number(rhs, &imm) || imm < 0 || imm > 255) {
-                            fprintf(stderr, "Error at line %d: Value '%s' out of bounds (0-255).\n", line_num, rhs);
+                            fprintf(stderr, "Error in %s:%d: Value '%s' out of bounds (0-255).\n", file, line_num, rhs);
                             return -1;
                         }
                         op = 0x7000 | (vx << 8) | ((uint8_t)imm & 0xFF);
@@ -611,17 +770,14 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                 } else if (strncmp(op_ptr, "-=", 2) == 0) {
                     int vy = parse_register(rhs);
                     if (vy != -1) {
-                        // 8XY5: vX -= vY
                         op = 0x8005 | (vx << 8) | (vy << 4);
                     } else {
-                        // CHIP-8 doesn't have 8-bit immediate subtract, but 7XNN adds NN.
-                        // Adding (256 - NN) is mathematically identical to subtracting NN modulo 256.
                         long imm;
                         if (parse_number(rhs, &imm) && imm >= 0 && imm <= 255) {
                             uint8_t sub_val = (uint8_t)((256 - imm) & 0xFF);
                             op = 0x7000 | (vx << 8) | sub_val;
                         } else {
-                            fprintf(stderr, "Error at line %d: Invalid operand for '-=': %s\n", line_num, rhs);
+                            fprintf(stderr, "Error in %s:%d: Invalid operand for '-=': %s\n", file, line_num, rhs);
                             return -1;
                         }
                     }
@@ -630,7 +786,7 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                     if (vy != -1) {
                         op = 0x8001 | (vx << 8) | (vy << 4);
                     } else {
-                        fprintf(stderr, "Error at line %d: Expected register after '|='.\n", line_num);
+                        fprintf(stderr, "Error in %s:%d: Expected register after '|='.\n", file, line_num);
                         return -1;
                     }
                 } else if (strncmp(op_ptr, "&=", 2) == 0) {
@@ -638,7 +794,7 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                     if (vy != -1) {
                         op = 0x8002 | (vx << 8) | (vy << 4);
                     } else {
-                        fprintf(stderr, "Error at line %d: Expected register after '&='.\n", line_num);
+                        fprintf(stderr, "Error in %s:%d: Expected register after '&='.\n", file, line_num);
                         return -1;
                     }
                 } else if (strncmp(op_ptr, "^=", 2) == 0) {
@@ -646,7 +802,7 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                     if (vy != -1) {
                         op = 0x8003 | (vx << 8) | (vy << 4);
                     } else {
-                        fprintf(stderr, "Error at line %d: Expected register after '^='.\n", line_num);
+                        fprintf(stderr, "Error in %s:%d: Expected register after '^='.\n", file, line_num);
                         return -1;
                     }
                 }
@@ -660,12 +816,11 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
         return 2;
     }
 
-    fprintf(stderr, "Syntax Error at line %d: Unknown instruction '%s'\n", line_num, line);
+    fprintf(stderr, "Syntax Error in %s:%d: Unknown instruction '%s'\n", file, line_num, line);
     return -1;
 }
 
-// Splits a line into an optional label and instruction
-// Returns pointer to instruction string (may be empty if line was only a label)
+// Extracts optional label from line
 static char *extract_label(char *line, char *label_buf, size_t label_buf_size) {
     label_buf[0] = '\0';
     char *colon = strchr(line, ':');
@@ -687,60 +842,56 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    FILE *source = fopen(argv[1], "r");
-    if (!source) {
-        fprintf(stderr, "Error: Could not open source file '%s'.\n", argv[1]);
-        return 1;
-    }
-
-    LabelTable table;
-    table.count = 0;
-
-    char line_buf[MAX_LINE_LEN];
-    char raw_line[MAX_LINE_LEN];
-    char label[MAX_LABEL_LEN];
-
     printf("=======================================\n");
     printf("Compiling source: %s\n", argv[1]);
     printf("=======================================\n");
 
     // ==========================================
+    // PREPROCESS STAGE: #include, #define, const
+    // ==========================================
+    printf("[Preprocess] Resolving includes and macros...\n");
+    PreprocessedSource ps = { .count = 0 };
+    DefineTable dt = { .count = 0 };
+
+    if (!preprocess_file(argv[1], &ps, &dt, 0)) {
+        return 1;
+    }
+    printf("[Preprocess] Done. Total lines: %d, active defines: %d\n", ps.count, dt.count);
+
+    // ==========================================
     // PASS 1: Symbol resolution & address sizing
     // ==========================================
     printf("[Pass 1] Scanning labels and computing addresses...\n");
+    LabelTable table = { .count = 0 };
     uint16_t current_address = START_ADDRESS;
-    int line_num = 0;
+    char label[MAX_LABEL_LEN];
 
-    while (fgets(line_buf, sizeof(line_buf), source)) {
-        line_num++;
-        strip_comments(line_buf);
+    for (int i = 0; i < ps.count; i++) {
+        char line_copy[MAX_LINE_LEN];
+        strncpy(line_copy, ps.lines[i].text, sizeof(line_copy) - 1);
+        line_copy[sizeof(line_copy) - 1] = '\0';
 
-        char *instr = extract_label(line_buf, label, sizeof(label));
+        char *instr = extract_label(line_copy, label, sizeof(label));
 
-        // If there was a label definition on this line
         if (strlen(label) > 0) {
-            if (!add_label(&table, label, current_address, line_num)) {
-                fclose(source);
+            if (!add_label(&table, label, current_address, ps.lines[i].filename, ps.lines[i].line_number)) {
                 return 1;
             }
-            printf("  Defined label '%s' at 0x%03X (line %d)\n", label, current_address, line_num);
+            printf("  Defined label '%s' at 0x%03X (%s:%d)\n",
+                   label, current_address, ps.lines[i].filename, ps.lines[i].line_number);
         }
 
-        // If there's an instruction or data directive
         if (strlen(instr) > 0) {
-            int db_count = get_data_byte_count(instr, line_num);
+            int db_count = get_data_byte_count(instr, ps.lines[i].filename, ps.lines[i].line_number);
             int byte_size = (db_count > 0) ? db_count : 2;
 
             if (db_count == -2) {
-                // Syntax error inside db
-                fclose(source);
                 return 1;
             }
 
             if (current_address + byte_size > MAX_ADDRESS) {
-                fprintf(stderr, "Error at line %d: Program size exceeded CHIP-8 memory limit (0x%03X).\n",
-                        line_num, MAX_ADDRESS);
-                fclose(source);
+                fprintf(stderr, "Error in %s:%d: Program size exceeded CHIP-8 memory limit (0x%03X).\n",
+                        ps.lines[i].filename, ps.lines[i].line_number, MAX_ADDRESS);
                 return 1;
             }
             current_address += byte_size;
@@ -754,43 +905,36 @@ int main(int argc, char **argv) {
     // PASS 2: Assemble instructions into opcodes
     // ==========================================
     printf("[Pass 2] Generating machine code...\n");
-    rewind(source);
-
     FILE *output = fopen(argv[2], "wb");
     if (!output) {
         fprintf(stderr, "Error: Could not open output file '%s'.\n", argv[2]);
-        fclose(source);
         return 1;
     }
 
-    line_num = 0;
     current_address = START_ADDRESS;
     bool has_error = false;
 
-    while (fgets(line_buf, sizeof(line_buf), source)) {
-        line_num++;
-        strncpy(raw_line, line_buf, sizeof(raw_line) - 1);
-        raw_line[sizeof(raw_line) - 1] = '\0';
-        strip_comments(raw_line);
+    for (int i = 0; i < ps.count; i++) {
+        char line_copy[MAX_LINE_LEN];
+        strncpy(line_copy, ps.lines[i].text, sizeof(line_copy) - 1);
+        line_copy[sizeof(line_copy) - 1] = '\0';
 
-        strip_comments(line_buf);
-        char *instr = extract_label(line_buf, label, sizeof(label));
-
+        char *instr = extract_label(line_copy, label, sizeof(label));
         if (strlen(instr) == 0) continue;
 
         uint8_t bytes[MAX_BYTES_PER_LINE];
-        int num_bytes = assemble_line(instr, &table, bytes, line_num);
+        int num_bytes = assemble_line(instr, &table, bytes, ps.lines[i].filename, ps.lines[i].line_number);
 
         if (num_bytes <= 0) {
             has_error = true;
             break;
         }
 
-        if (num_bytes == 2 && get_data_byte_count(instr, line_num) <= 0) {
+        if (num_bytes == 2 && get_data_byte_count(instr, ps.lines[i].filename, ps.lines[i].line_number) <= 0) {
             uint16_t op = (bytes[0] << 8) | bytes[1];
-            printf("  [0x%03X] %-25s -> Opcode: 0x%04X\n", current_address, trim_whitespace(raw_line), op);
+            printf("  [0x%03X] %-25s -> Opcode: 0x%04X\n", current_address, ps.lines[i].text, op);
         } else {
-            printf("  [0x%03X] %-25s -> %d data bytes\n", current_address, trim_whitespace(raw_line), num_bytes);
+            printf("  [0x%03X] %-25s -> %d data bytes\n", current_address, ps.lines[i].text, num_bytes);
         }
 
         if (fwrite(bytes, sizeof(uint8_t), num_bytes, output) != (size_t)num_bytes) {
@@ -802,11 +946,10 @@ int main(int argc, char **argv) {
         current_address += num_bytes;
     }
 
-    fclose(source);
     fclose(output);
 
     if (has_error) {
-        remove(argv[2]); // Delete incomplete/corrupt binary
+        remove(argv[2]);
         printf("\nCompilation FAILED due to errors.\n");
         return 1;
     }
