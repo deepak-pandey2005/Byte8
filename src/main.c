@@ -1,7 +1,40 @@
 #include "chip8.h"
 #include <SDL2/SDL.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
+
+#define AUDIO_SAMPLE_RATE 44100
+#define BEEP_FREQUENCY 440 // 440 Hz standard concert A / retro buzzer pitch
+#define BEEP_VOLUME 3000   // 16-bit audio volume level
+
+typedef struct {
+  bool playing;
+  int sample_index;
+} AudioState;
+
+// SDL Audio Callback generating a smooth 440 Hz square wave beep
+static void audio_callback(void *userdata, Uint8 *stream, int len) {
+  AudioState *state = (AudioState *)userdata;
+  int16_t *buffer = (int16_t *)stream;
+  int samples = len / (int)sizeof(int16_t);
+
+  for (int i = 0; i < samples; i++) {
+    if (state->playing) {
+      // Period in samples for the target frequency
+      int period = AUDIO_SAMPLE_RATE / BEEP_FREQUENCY;
+      if ((state->sample_index % period) < (period / 2)) {
+        buffer[i] = BEEP_VOLUME;
+      } else {
+        buffer[i] = -BEEP_VOLUME;
+      }
+      state->sample_index++;
+    } else {
+      buffer[i] = 0;
+      state->sample_index = 0;
+    }
+  }
+}
 
 // CHIP-8 Hex Keypad Map:
 // 1 2 3 C      -> 1 2 3 4
@@ -44,9 +77,25 @@ int main(int argc, char **argv) {
   chip8_init(&chip8);
   chip8_load_rom(&chip8, argv[1]);
 
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) < 0) {
     fprintf(stderr, "SDL Init failed: %s\n", SDL_GetError());
     return 1;
+  }
+
+  // Configure SDL audio for the CHIP-8 buzzer
+  AudioState audio_state = { .playing = false, .sample_index = 0 };
+  SDL_AudioSpec want, have;
+  SDL_zero(want);
+  want.freq = AUDIO_SAMPLE_RATE;
+  want.format = AUDIO_S16SYS;
+  want.channels = 1;
+  want.samples = 512;
+  want.callback = audio_callback;
+  want.userdata = &audio_state;
+
+  SDL_AudioDeviceID audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+  if (audio_device != 0) {
+    SDL_PauseAudioDevice(audio_device, 0); // Unpause audio stream
   }
 
   SDL_Window *window = SDL_CreateWindow(
@@ -56,6 +105,7 @@ int main(int argc, char **argv) {
 
   if (!window) {
     fprintf(stderr, "Window creation failed: %s\n", SDL_GetError());
+    if (audio_device) SDL_CloseAudioDevice(audio_device);
     SDL_Quit();
     return 1;
   }
@@ -97,11 +147,18 @@ int main(int argc, char **argv) {
       chip8_cycle(&chip8);
     }
 
-    // 60 Hz timer decrement
+    // 60 Hz timer decrement & Audio buzzer synchronization
     Uint32 current_time = SDL_GetTicks();
     if (current_time - last_timer_update >= 16) {
       chip8_update_timers(&chip8);
       last_timer_update = current_time;
+
+      // Play buzzer sound whenever sound_timer > 0
+      if (audio_device != 0) {
+        SDL_LockAudioDevice(audio_device);
+        audio_state.playing = (chip8.sound_timer > 0);
+        SDL_UnlockAudioDevice(audio_device);
+      }
     }
 
     // Render if screen changed
@@ -125,6 +182,9 @@ int main(int argc, char **argv) {
     SDL_Delay(1); // Relax CPU
   }
 
+  if (audio_device != 0) {
+    SDL_CloseAudioDevice(audio_device);
+  }
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();
