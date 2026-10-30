@@ -1,23 +1,25 @@
-# Pong Game for Byte8 CHIP-8
-# Standard CHIP-8 resolution: 64x32
+# Pong - Classic Two-Player / AI Arcade Game
+# Screen resolution: 64x32
 # Controls:
 #   v5, v6: Paddle 1 Y, Paddle 2 Y
 #   v7, v8: Ball X, Ball Y
-#   v9, vA: Ball Vel X, Ball Vel Y
-#   vB, vC: Score 1, Score 2
+#   v9, vA: Ball Velocity X, Ball Velocity Y
+#   vB, vC: Score Player 1, Score Player 2
 
 start:
     cls
-    v5 = 12         ; Paddle 1 Y (left, x=2)
-    v6 = 12         ; Paddle 2 Y (right, x=61)
-    vB = 0          ; Score 1
-    vC = 0          ; Score 2
+    v5 = 12         ; Paddle 1 Y (x=2)
+    v6 = 12         ; Paddle 2 Y (x=61)
+    vB = 0          ; P1 score
+    vC = 0          ; P2 score
 
 reset_ball:
+    # Set sound timer to beep on reset/score
+    sound = v9
     v7 = 31         ; Ball X center
     v8 = 15         ; Ball Y center
-    v9 = 1          ; Vel X (1 = right)
-    vA = 1          ; Vel Y (1 = down)
+    v9 = 1          ; Vel X (1=right, 0=left)
+    vA = 1          ; Vel Y (1=down, 0=up)
 
 draw_all:
     cls
@@ -40,20 +42,17 @@ draw_all:
     draw v0, v1, 2
 
 game_loop:
-    # ----------------------------------------
-    # Simple AI / auto move for right paddle: follow ball Y
-    # ----------------------------------------
+    # AI logic for right paddle: track ball
     if v6 == v8
     jump check_left_paddle
 
-    # If paddle Y < ball Y, move paddle down
     v6 += 1
     if v6 != 27
     jump check_left_paddle
     v6 = 26
 
 check_left_paddle:
-    # Follow ball with slight lag
+    # Player 1 paddle tracking
     if v5 == v8
     jump move_ball
 
@@ -63,19 +62,15 @@ check_left_paddle:
     v5 = 26
 
 move_ball:
-    # ----------------------------------------
-    # Move ball in X
-    # ----------------------------------------
     if v9 == 1
     jump ball_moving_right
 
 ball_moving_left:
     v7 -= 1
-    # Check left paddle bounce (x=3)
     if v7 != 3
     jump check_left_wall
 
-    # Check if ball Y is near paddle 1 Y
+    # Paddle 1 collision check
     v0 = v8
     if v0 == v5
     jump bounce_x
@@ -93,11 +88,10 @@ check_left_wall:
 
 ball_moving_right:
     v7 += 1
-    # Check right paddle bounce (x=60)
     if v7 != 60
     jump check_right_wall
 
-    # Check if ball Y is near paddle 2 Y
+    # Paddle 2 collision check
     v0 = v8
     if v0 == v6
     jump bounce_x
@@ -114,7 +108,9 @@ check_right_wall:
     jump update_y
 
 bounce_x:
-    # Flip horizontal direction
+    # Beep buzzer on bounce
+    v0 = 2
+    sound = v0
     if v9 == 1
     jump set_vx_neg
     v9 = 1
@@ -125,9 +121,6 @@ set_vx_neg:
     jump update_y
 
 update_y:
-    # ----------------------------------------
-    # Move ball in Y
-    # ----------------------------------------
     if vA == 1
     jump ball_down
 
@@ -147,15 +140,17 @@ render_frame:
 
 score_p1:
     vB += 1
+    v0 = 5
+    sound = v0
     jump reset_ball
 
 score_p2:
     vC += 1
+    v0 = 5
+    sound = v0
     jump reset_ball
 
-# --------------------------------------------
 # Sprites
-# --------------------------------------------
 paddle_sprite:
     db 0b10000000
     db 0b10000000

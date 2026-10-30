@@ -1,0 +1,142 @@
+# Snake Game for Byte8 CHIP-8
+# Controls:
+#   2: UP     (SDL key 2)
+#   8: DOWN   (SDL key S)
+#   4: LEFT   (SDL key Q)
+#   6: RIGHT  (SDL key E)
+# Registers:
+#   v0, v1: Coordinates X, Y for drawing
+#   v2, v3: Snake Head X, Y
+#   v4: Current Direction (1=Up, 2=Right, 3=Down, 4=Left)
+#   v5, v6: Food X, Food Y
+#   v7: Score / length counter
+
+start:
+    cls
+    v2 = 32         ; Snake Head X
+    v3 = 16         ; Snake Head Y
+    v4 = 2          ; Initial direction = Right
+    v5 = 20         ; Initial Food X
+    v6 = 10         ; Initial Food Y
+    v7 = 0          ; Initial Score
+
+draw_initial:
+    cls
+    # Draw food (2x2)
+    v0 = v5
+    v1 = v6
+    i = food_sprite
+    draw v0, v1, 2
+
+    # Draw snake head (2x2)
+    v0 = v2
+    v1 = v3
+    i = snake_sprite
+    draw v0, v1, 2
+
+main_loop:
+    # ----------------------------------------
+    # Check Keypad Controls
+    # ----------------------------------------
+    v0 = 2          ; UP key (key 2)
+    skip_nkey v0
+    v4 = 1
+
+    v0 = 6          ; RIGHT key (key 6 / E)
+    skip_nkey v0
+    v4 = 2
+
+    v0 = 8          ; DOWN key (key 8 / S)
+    skip_nkey v0
+    v4 = 3
+
+    v0 = 4          ; LEFT key (key 4 / Q)
+    skip_nkey v0
+    v4 = 4
+
+    # ----------------------------------------
+    # Move Snake Head
+    # ----------------------------------------
+    if v4 == 1
+    jump move_up
+    if v4 == 2
+    jump move_right
+    if v4 == 3
+    jump move_down
+    if v4 == 4
+    jump move_left
+    jump check_food
+
+move_up:
+    v3 -= 2
+    if v3 == 0
+    v3 = 30
+    jump check_food
+
+move_right:
+    v2 += 2
+    if v2 == 64
+    v2 = 0
+    jump check_food
+
+move_down:
+    v3 += 2
+    if v3 == 32
+    v3 = 0
+    jump check_food
+
+move_left:
+    v2 -= 2
+    if v2 == 0
+    v2 = 62
+
+check_food:
+    # Check if snake head reached food
+    v0 = v2
+    if v0 != v5
+    jump render
+
+    v1 = v3
+    if v1 != v6
+    jump render
+
+    # Food eaten: increment score, beep, and respawn food
+    v7 += 1
+    v0 = 3
+    sound = v0
+    v5 = rand 60
+    v6 = rand 28
+
+render:
+    cls
+    # Redraw food
+    v0 = v5
+    v1 = v6
+    i = food_sprite
+    draw v0, v1, 2
+
+    # Redraw head
+    v0 = v2
+    v1 = v3
+    i = snake_sprite
+    draw v0, v1, 2
+
+    # Delay for gameplay speed
+    v0 = 4
+    delay = v0
+
+wait_delay:
+    v0 = delay
+    if v0 != 0
+    jump wait_delay
+
+    jump main_loop
+
+# Sprites (2x2 pixels)
+snake_sprite:
+    db 0b11000000
+    db 0b11000000
+
+food_sprite:
+    db 0b11000000
+    db 0b11000000

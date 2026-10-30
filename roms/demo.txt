@@ -1,0 +1,50 @@
+# Byte8 Graphics & Opcodes Demo
+# Displays custom logo sprite, draws font numbers, and plays audio beep
+start:
+    cls
+    v0 = 24         ; Logo X position
+    v1 = 4          ; Logo Y position
+    i = byte8_logo
+    draw v0, v1, 10 ; Draw 10-line Byte8 logo
+
+    # Draw digits 8 and 8 using built-in fontset
+    vA = 8
+    i = font vA
+    v0 = 26
+    v1 = 18
+    draw v0, v1, 5
+
+    vA = 8
+    i = font vA
+    v0 = 34
+    v1 = 18
+    draw v0, v1, 5
+
+    # Short celebratory beep
+    v0 = 6
+    sound = v0
+
+spin_loop:
+    # Wait for key press to clear and restart
+    v0 = 5
+    delay = v0
+
+wait_loop:
+    v1 = delay
+    if v1 != 0
+    jump wait_loop
+
+    jump spin_loop
+
+# 8x10 Sprite for Byte8 Banner
+byte8_logo:
+    db 0b11111100
+    db 0b10000010
+    db 0b10000010
+    db 0b11111100
+    db 0b10000010
+    db 0b10000010
+    db 0b11111100
+    db 0b00000000
+    db 0b11111111
+    db 0b00000000
