@@ -311,7 +311,7 @@ int main(int argc, char **argv) {
   SDL_Window *window = SDL_CreateWindow(
       window_title,
       SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-      win_width, win_height, SDL_WINDOW_SHOWN);
+      win_width, win_height, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 
   if (!window) {
     fprintf(stderr, "Window creation failed: %s\n", SDL_GetError());
@@ -324,6 +324,23 @@ int main(int argc, char **argv) {
   if (!renderer) {
     renderer = SDL_CreateRenderer(window, -1, 0);
   }
+
+  // Force renderer to keep crisp 64x32 virtual resolution and integer/clean aspect ratio
+  SDL_RenderSetLogicalSize(renderer, VIDEO_WIDTH, VIDEO_HEIGHT);
+  SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+
+  // Create an efficient native texture for 64x32 pixel updates
+  SDL_Texture *screen_texture = SDL_CreateTexture(
+      renderer,
+      SDL_PIXELFORMAT_ARGB8888,
+      SDL_TEXTUREACCESS_STREAMING,
+      VIDEO_WIDTH, VIDEO_HEIGHT);
+
+  uint32_t pixel_buffer[VIDEO_WIDTH * VIDEO_HEIGHT];
+  uint32_t bg_color_argb = (0xFF << 24) | (config.theme.bg_r << 16) | (config.theme.bg_g << 8) | config.theme.bg_b;
+  uint32_t fg_color_argb = (0xFF << 24) | (config.theme.fg_r << 16) | (config.theme.fg_g << 8) | config.theme.fg_b;
+
+  bool is_fullscreen = false;
 
   int cycles_per_frame = config.clock_speed / config.fps;
   if (cycles_per_frame < 1) cycles_per_frame = 1;
@@ -347,6 +364,10 @@ int main(int argc, char **argv) {
       } else if (event.type == SDL_KEYDOWN) {
         if (event.key.keysym.sym == SDLK_ESCAPE) {
           running = false;
+        } else if (event.key.keysym.sym == SDLK_F11) {
+          // Toggle fullscreen
+          is_fullscreen = !is_fullscreen;
+          SDL_SetWindowFullscreen(window, is_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
         }
         int k = map_sdl_key_to_chip8(event.key.keysym.sym);
         if (k != -1) {
@@ -380,27 +401,17 @@ int main(int argc, char **argv) {
 
     // Render if screen updated
     if (chip8.draw_flag) {
-      SDL_SetRenderDrawColor(renderer,
-                             config.theme.bg_r,
-                             config.theme.bg_g,
-                             config.theme.bg_b,
-                             255);
-      SDL_RenderClear(renderer);
-
-      SDL_SetRenderDrawColor(renderer,
-                             config.theme.fg_r,
-                             config.theme.fg_g,
-                             config.theme.fg_b,
-                             255);
-      for (int y = 0; y < VIDEO_HEIGHT; y++) {
-        for (int x = 0; x < VIDEO_WIDTH; x++) {
-          if (chip8.gfx[y * VIDEO_WIDTH + x]) {
-            SDL_Rect rect = {x * config.scale, y * config.scale, config.scale, config.scale};
-            SDL_RenderFillRect(renderer, &rect);
-          }
-        }
+      for (int i = 0; i < VIDEO_WIDTH * VIDEO_HEIGHT; i++) {
+        pixel_buffer[i] = chip8.gfx[i] ? fg_color_argb : bg_color_argb;
       }
+
+      SDL_UpdateTexture(screen_texture, NULL, pixel_buffer, VIDEO_WIDTH * sizeof(uint32_t));
+
+      SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+      SDL_RenderClear(renderer);
+      SDL_RenderCopy(renderer, screen_texture, NULL, NULL);
       SDL_RenderPresent(renderer);
+
       chip8.draw_flag = false;
     }
 
@@ -409,6 +420,9 @@ int main(int argc, char **argv) {
 
   if (audio_device != 0) {
     SDL_CloseAudioDevice(audio_device);
+  }
+  if (screen_texture) {
+    SDL_DestroyTexture(screen_texture);
   }
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
