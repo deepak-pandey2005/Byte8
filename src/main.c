@@ -3,15 +3,25 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define AUDIO_SAMPLE_RATE 44100
-#define BEEP_FREQUENCY 440 // 440 Hz standard concert A / retro buzzer pitch
+#define BEEP_FREQUENCY 440 // 440 Hz standard pitch
 #define BEEP_VOLUME 3000   // 16-bit audio volume level
 
 typedef struct {
   bool playing;
   int sample_index;
 } AudioState;
+
+typedef struct {
+  const char *rom_path;
+  int scale;
+  int clock_speed; // in Hz (default: 540)
+  int fps;         // in Hz (default: 60)
+  bool mute;
+} EmulatorConfig;
 
 // SDL Audio Callback generating a smooth 440 Hz square wave beep
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
@@ -21,7 +31,6 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
 
   for (int i = 0; i < samples; i++) {
     if (state->playing) {
-      // Period in samples for the target frequency
       int period = AUDIO_SAMPLE_RATE / BEEP_FREQUENCY;
       if ((state->sample_index % period) < (period / 2)) {
         buffer[i] = BEEP_VOLUME;
@@ -67,41 +76,118 @@ static int map_sdl_key_to_chip8(SDL_Keycode key) {
   }
 }
 
+static void print_usage(const char *prog_name) {
+  printf("Byte8 CHIP-8 Emulator\n");
+  printf("Usage: %s <ROM file> [options]\n\n", prog_name);
+  printf("Options:\n");
+  printf("  --scale <num>        Pixel scale factor (default: 10, e.g. 15 for 960x480)\n");
+  printf("  --clock-speed <hz>   CPU clock speed in Hz (default: 540)\n");
+  printf("  --fps <num>          Display/timer refresh rate in Hz (default: 60)\n");
+  printf("  --mute               Disable audio buzzer\n");
+  printf("  -h, --help           Show this help message\n");
+}
+
+static int parse_args(int argc, char **argv, EmulatorConfig *config) {
+  config->rom_path = NULL;
+  config->scale = 10;
+  config->clock_speed = 540;
+  config->fps = 60;
+  config->mute = false;
+
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+      print_usage(argv[0]);
+      return 0; // Exit successfully with help
+    } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
+      config->scale = atoi(argv[++i]);
+      if (config->scale < 1 || config->scale > 50) {
+        fprintf(stderr, "Error: --scale must be between 1 and 50.\n");
+        return -1;
+      }
+    } else if (strcmp(argv[i], "--clock-speed") == 0 && i + 1 < argc) {
+      config->clock_speed = atoi(argv[++i]);
+      if (config->clock_speed < 10 || config->clock_speed > 50000) {
+        fprintf(stderr, "Error: --clock-speed must be between 10 and 50000 Hz.\n");
+        return -1;
+      }
+    } else if (strcmp(argv[i], "--fps") == 0 && i + 1 < argc) {
+      config->fps = atoi(argv[++i]);
+      if (config->fps < 10 || config->fps > 240) {
+        fprintf(stderr, "Error: --fps must be between 10 and 240.\n");
+        return -1;
+      }
+    } else if (strcmp(argv[i], "--mute") == 0) {
+      config->mute = true;
+    } else if (argv[i][0] != '-') {
+      if (!config->rom_path) {
+        config->rom_path = argv[i];
+      } else {
+        fprintf(stderr, "Unexpected extra argument: %s\n", argv[i]);
+        return -1;
+      }
+    } else {
+      fprintf(stderr, "Unknown option: %s\n", argv[i]);
+      print_usage(argv[0]);
+      return -1;
+    }
+  }
+
+  if (!config->rom_path) {
+    print_usage(argv[0]);
+    return -1;
+  }
+
+  return 1; // Success with valid ROM
+}
+
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    printf("Usage: %s <ROM file>\n", argv[0]);
-    return 1;
+  EmulatorConfig config;
+  int parse_res = parse_args(argc, argv, &config);
+  if (parse_res <= 0) {
+    return (parse_res == 0) ? 0 : 1;
   }
 
   Chip8 chip8;
   chip8_init(&chip8);
-  chip8_load_rom(&chip8, argv[1]);
+  chip8_load_rom(&chip8, config.rom_path);
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) < 0) {
     fprintf(stderr, "SDL Init failed: %s\n", SDL_GetError());
     return 1;
   }
 
-  // Configure SDL audio for the CHIP-8 buzzer
+  // Audio setup
   AudioState audio_state = { .playing = false, .sample_index = 0 };
-  SDL_AudioSpec want, have;
-  SDL_zero(want);
-  want.freq = AUDIO_SAMPLE_RATE;
-  want.format = AUDIO_S16SYS;
-  want.channels = 1;
-  want.samples = 512;
-  want.callback = audio_callback;
-  want.userdata = &audio_state;
+  SDL_AudioDeviceID audio_device = 0;
 
-  SDL_AudioDeviceID audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
-  if (audio_device != 0) {
-    SDL_PauseAudioDevice(audio_device, 0); // Unpause audio stream
+  if (!config.mute) {
+    SDL_AudioSpec want, have;
+    SDL_zero(want);
+    want.freq = AUDIO_SAMPLE_RATE;
+    want.format = AUDIO_S16SYS;
+    want.channels = 1;
+    want.samples = 512;
+    want.callback = audio_callback;
+    want.userdata = &audio_state;
+
+    audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    if (audio_device != 0) {
+      SDL_PauseAudioDevice(audio_device, 0);
+    }
   }
 
+  int win_width = VIDEO_WIDTH * config.scale;
+  int win_height = VIDEO_HEIGHT * config.scale;
+
+  char window_title[128];
+  snprintf(window_title, sizeof(window_title),
+           "Byte8 CHIP-8 Emulator [%d Hz, %d FPS]",
+           config.clock_speed, config.fps);
+
   SDL_Window *window = SDL_CreateWindow(
-      "Byte8 CHIP-8 Emulator",
+      window_title,
       SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-      640, 320, SDL_WINDOW_SHOWN);
+      win_width, win_height, SDL_WINDOW_SHOWN);
 
   if (!window) {
     fprintf(stderr, "Window creation failed: %s\n", SDL_GetError());
@@ -115,11 +201,16 @@ int main(int argc, char **argv) {
     renderer = SDL_CreateRenderer(window, -1, 0);
   }
 
-  // CHIP-8 timer frequency is 60 Hz (~16.66 ms per tick)
-  // CPU clock runs ~500 to 700 Hz (around 8 to 10 cycles per timer tick)
-  const int CYCLES_PER_FRAME = 9;
+  int cycles_per_frame = config.clock_speed / config.fps;
+  if (cycles_per_frame < 1) cycles_per_frame = 1;
+
+  double timer_interval_ms = 1000.0 / config.fps;
   Uint32 last_timer_update = SDL_GetTicks();
   bool running = true;
+
+  printf("Running %s at %d Hz CPU, %d FPS, %dx scale (Window: %dx%d)%s\n",
+         config.rom_path, config.clock_speed, config.fps, config.scale,
+         win_width, win_height, config.mute ? " [Muted]" : "");
 
   while (running) {
     SDL_Event event;
@@ -143,17 +234,16 @@ int main(int argc, char **argv) {
     }
 
     // Run CPU cycles for this frame slice
-    for (int i = 0; i < CYCLES_PER_FRAME; i++) {
+    for (int i = 0; i < cycles_per_frame; i++) {
       chip8_cycle(&chip8);
     }
 
-    // 60 Hz timer decrement & Audio buzzer synchronization
+    // Timer decrement at configured rate (standard 60 Hz)
     Uint32 current_time = SDL_GetTicks();
-    if (current_time - last_timer_update >= 16) {
+    if ((double)(current_time - last_timer_update) >= timer_interval_ms) {
       chip8_update_timers(&chip8);
       last_timer_update = current_time;
 
-      // Play buzzer sound whenever sound_timer > 0
       if (audio_device != 0) {
         SDL_LockAudioDevice(audio_device);
         audio_state.playing = (chip8.sound_timer > 0);
@@ -161,7 +251,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    // Render if screen changed
+    // Render if screen updated
     if (chip8.draw_flag) {
       SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
       SDL_RenderClear(renderer);
@@ -170,7 +260,7 @@ int main(int argc, char **argv) {
       for (int y = 0; y < VIDEO_HEIGHT; y++) {
         for (int x = 0; x < VIDEO_WIDTH; x++) {
           if (chip8.gfx[y * VIDEO_WIDTH + x]) {
-            SDL_Rect rect = {x * 10, y * 10, 10, 10};
+            SDL_Rect rect = {x * config.scale, y * config.scale, config.scale, config.scale};
             SDL_RenderFillRect(renderer, &rect);
           }
         }
@@ -179,7 +269,7 @@ int main(int argc, char **argv) {
       chip8.draw_flag = false;
     }
 
-    SDL_Delay(1); // Relax CPU
+    SDL_Delay(1);
   }
 
   if (audio_device != 0) {
