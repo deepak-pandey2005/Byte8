@@ -5,14 +5,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #define AUDIO_SAMPLE_RATE 44100
-#define BEEP_FREQUENCY 440 // 440 Hz standard pitch
-#define BEEP_VOLUME 3000   // 16-bit audio volume level
+#define PI 3.14159265358979323846
+
+typedef enum {
+  WAVE_SQUARE,
+  WAVE_SINE,
+  WAVE_TRIANGLE,
+  WAVE_SAWTOOTH
+} WaveformType;
 
 typedef struct {
   bool playing;
   int sample_index;
+  int frequency;
+  int volume;           // 0 to 100
+  WaveformType waveform;
 } AudioState;
 
 typedef struct {
@@ -36,23 +46,52 @@ typedef struct {
   int clock_speed; // in Hz (default: 540)
   int fps;         // in Hz (default: 60)
   bool mute;
+  int volume;      // 0 to 100 (default: 50)
+  int pitch;       // in Hz (default: 440)
+  WaveformType waveform; // square, sine, triangle, sawtooth
   ColorTheme theme;
 } EmulatorConfig;
 
-// SDL Audio Callback generating a smooth 440 Hz square wave beep
+// Audio Callback synthesizing the selected waveform with volume scaling
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
   AudioState *state = (AudioState *)userdata;
   int16_t *buffer = (int16_t *)stream;
   int samples = len / (int)sizeof(int16_t);
 
+  // Maximum 16-bit signed audio magnitude scaled by volume percentage
+  double max_amplitude = (32767.0 * (state->volume / 100.0)) * 0.35; // gentle default level
+  int period = AUDIO_SAMPLE_RATE / state->frequency;
+  if (period < 1) period = 1;
+
   for (int i = 0; i < samples; i++) {
-    if (state->playing) {
-      int period = AUDIO_SAMPLE_RATE / BEEP_FREQUENCY;
-      if ((state->sample_index % period) < (period / 2)) {
-        buffer[i] = BEEP_VOLUME;
-      } else {
-        buffer[i] = -BEEP_VOLUME;
+    if (state->playing && state->volume > 0) {
+      double sample_val = 0.0;
+      int phase = state->sample_index % period;
+      double normalized_phase = (double)phase / (double)period; // 0.0 to 1.0
+
+      switch (state->waveform) {
+      case WAVE_SQUARE:
+        sample_val = (normalized_phase < 0.5) ? max_amplitude : -max_amplitude;
+        break;
+
+      case WAVE_SINE:
+        sample_val = sin(normalized_phase * 2.0 * PI) * max_amplitude;
+        break;
+
+      case WAVE_TRIANGLE:
+        if (normalized_phase < 0.5) {
+          sample_val = (-1.0 + 4.0 * normalized_phase) * max_amplitude;
+        } else {
+          sample_val = (3.0 - 4.0 * normalized_phase) * max_amplitude;
+        }
+        break;
+
+      case WAVE_SAWTOOTH:
+        sample_val = (-1.0 + 2.0 * normalized_phase) * max_amplitude;
+        break;
       }
+
+      buffer[i] = (int16_t)sample_val;
       state->sample_index++;
     } else {
       buffer[i] = 0;
@@ -95,13 +134,18 @@ static int map_sdl_key_to_chip8(SDL_Keycode key) {
 static void print_usage(const char *prog_name) {
   printf("Byte8 CHIP-8 Emulator\n");
   printf("Usage: %s <ROM file> [options]\n\n", prog_name);
-  printf("Options:\n");
-  printf("  --scale <num>        Pixel scale factor (default: 10, e.g. 15 for 960x480)\n");
-  printf("  --clock-speed <hz>   CPU clock speed in Hz (default: 540)\n");
-  printf("  --fps <num>          Display/timer refresh rate in Hz (default: 60)\n");
-  printf("  --theme <name>       Color theme (classic, matrix, amber, gameboy, cyber)\n");
-  printf("  --mute               Disable audio buzzer\n");
-  printf("  -h, --help           Show this help message\n");
+  printf("General Options:\n");
+  printf("  --scale <num>          Pixel scale factor (default: 10, e.g. 15 for 960x480)\n");
+  printf("  --clock-speed <hz>     CPU clock speed in Hz (default: 540)\n");
+  printf("  --fps <num>            Display/timer refresh rate in Hz (default: 60)\n");
+  printf("  --theme <name>         Color theme (classic, matrix, amber, gameboy, cyber)\n");
+  printf("\nAudio Options:\n");
+  printf("  --volume <0-100>       Audio buzzer volume (default: 50)\n");
+  printf("  --pitch <hz>           Buzzer pitch frequency in Hz (default: 440)\n");
+  printf("  --wave <type>          Waveform: square, sine, triangle, sawtooth (default: square)\n");
+  printf("  --mute                 Disable audio buzzer\n");
+  printf("\nHelp:\n");
+  printf("  -h, --help             Show this help message\n");
 }
 
 static bool parse_theme(const char *name, ColorTheme *out_theme) {
@@ -114,18 +158,38 @@ static bool parse_theme(const char *name, ColorTheme *out_theme) {
   return false;
 }
 
+static bool parse_waveform(const char *name, WaveformType *out_wave) {
+  if (strcasecmp(name, "square") == 0) {
+    *out_wave = WAVE_SQUARE;
+    return true;
+  } else if (strcasecmp(name, "sine") == 0) {
+    *out_wave = WAVE_SINE;
+    return true;
+  } else if (strcasecmp(name, "triangle") == 0) {
+    *out_wave = WAVE_TRIANGLE;
+    return true;
+  } else if (strcasecmp(name, "sawtooth") == 0 || strcasecmp(name, "saw") == 0) {
+    *out_wave = WAVE_SAWTOOTH;
+    return true;
+  }
+  return false;
+}
+
 static int parse_args(int argc, char **argv, EmulatorConfig *config) {
   config->rom_path = NULL;
   config->scale = 10;
   config->clock_speed = 540;
   config->fps = 60;
   config->mute = false;
+  config->volume = 50;
+  config->pitch = 440;
+  config->waveform = WAVE_SQUARE;
   config->theme = COLOR_THEMES[0]; // default: classic
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       print_usage(argv[0]);
-      return 0; // Exit successfully with help
+      return 0;
     } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
       config->scale = atoi(argv[++i]);
       if (config->scale < 1 || config->scale > 50) {
@@ -150,6 +214,24 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
         fprintf(stderr, "Error: Unknown theme '%s'. Valid themes: classic, matrix, amber, gameboy, cyber\n", tname);
         return -1;
       }
+    } else if (strcmp(argv[i], "--volume") == 0 && i + 1 < argc) {
+      config->volume = atoi(argv[++i]);
+      if (config->volume < 0 || config->volume > 100) {
+        fprintf(stderr, "Error: --volume must be between 0 and 100.\n");
+        return -1;
+      }
+    } else if (strcmp(argv[i], "--pitch") == 0 && i + 1 < argc) {
+      config->pitch = atoi(argv[++i]);
+      if (config->pitch < 40 || config->pitch > 5000) {
+        fprintf(stderr, "Error: --pitch must be between 40 and 5000 Hz.\n");
+        return -1;
+      }
+    } else if (strcmp(argv[i], "--wave") == 0 && i + 1 < argc) {
+      const char *wname = argv[++i];
+      if (!parse_waveform(wname, &config->waveform)) {
+        fprintf(stderr, "Error: Unknown waveform '%s'. Valid waves: square, sine, triangle, sawtooth\n", wname);
+        return -1;
+      }
     } else if (strcmp(argv[i], "--mute") == 0) {
       config->mute = true;
     } else if (argv[i][0] != '-') {
@@ -171,7 +253,7 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
     return -1;
   }
 
-  return 1; // Success with valid ROM
+  return 1;
 }
 
 int main(int argc, char **argv) {
@@ -191,10 +273,16 @@ int main(int argc, char **argv) {
   }
 
   // Audio setup
-  AudioState audio_state = { .playing = false, .sample_index = 0 };
+  AudioState audio_state = {
+    .playing = false,
+    .sample_index = 0,
+    .frequency = config.pitch,
+    .volume = config.volume,
+    .waveform = config.waveform
+  };
   SDL_AudioDeviceID audio_device = 0;
 
-  if (!config.mute) {
+  if (!config.mute && config.volume > 0) {
     SDL_AudioSpec want, have;
     SDL_zero(want);
     want.freq = AUDIO_SAMPLE_RATE;
@@ -213,10 +301,12 @@ int main(int argc, char **argv) {
   int win_width = VIDEO_WIDTH * config.scale;
   int win_height = VIDEO_HEIGHT * config.scale;
 
+  const char *wave_names[] = { "Square", "Sine", "Triangle", "Sawtooth" };
   char window_title[160];
   snprintf(window_title, sizeof(window_title),
-           "Byte8 CHIP-8 Emulator [%s | %d Hz, %d FPS]",
-           config.theme.name, config.clock_speed, config.fps);
+           "Byte8 CHIP-8 Emulator [%s | %d Hz, %d FPS | Vol: %d%% %s]",
+           config.theme.name, config.clock_speed, config.fps,
+           config.mute ? 0 : config.volume, wave_names[config.waveform]);
 
   SDL_Window *window = SDL_CreateWindow(
       window_title,
@@ -242,9 +332,12 @@ int main(int argc, char **argv) {
   Uint32 last_timer_update = SDL_GetTicks();
   bool running = true;
 
-  printf("Running %s at %d Hz CPU, %d FPS, theme='%s', %dx scale (Window: %dx%d)%s\n",
+  printf("Running %s at %d Hz, %d FPS, theme='%s', scale=%dx (Window: %dx%d)\n",
          config.rom_path, config.clock_speed, config.fps, config.theme.name, config.scale,
-         win_width, win_height, config.mute ? " [Muted]" : "");
+         win_width, win_height);
+  printf("Audio: %s (Pitch: %d Hz, Volume: %d%%, Wave: %s)\n",
+         config.mute ? "Disabled [Muted]" : "Enabled",
+         config.pitch, config.mute ? 0 : config.volume, wave_names[config.waveform]);
 
   while (running) {
     SDL_Event event;

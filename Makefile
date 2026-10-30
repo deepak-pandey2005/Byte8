@@ -6,8 +6,8 @@ CC = gcc
 # -std=c99: Use the C99 standard
 CFLAGS = -Wall -Wextra -std=c99
 
-# Linker flags (Links the SDL2 library)
-LDFLAGS = -lSDL2
+# Linker flags (Links the SDL2 library and math library)
+LDFLAGS = -lSDL2 -lm
 
 # Target executable names
 TARGET = chip8
