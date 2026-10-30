@@ -12,6 +12,7 @@ LDFLAGS = -lSDL2
 # Target executable names
 TARGET = chip8
 COMPILER_TARGET = compiler
+DISASM_TARGET = disassembler
 
 # Source files
 SRCS = src/main.c src/chip8.c
@@ -20,11 +21,15 @@ SRCS = src/main.c src/chip8.c
 OBJS = $(SRCS:.c=.o)
 
 # Default rule (runs when you just type 'make')
-all: $(TARGET) $(COMPILER_TARGET)
+all: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
 
 # Rule to build the assembler/compiler
 $(COMPILER_TARGET): compiler.c
 	$(CC) $(CFLAGS) compiler.c -o $(COMPILER_TARGET)
+
+# Rule to build the disassembler
+$(DISASM_TARGET): disassembler.c
+	$(CC) $(CFLAGS) disassembler.c -o $(DISASM_TARGET)
 
 # Rule to link the executable
 $(TARGET): $(OBJS)
@@ -36,7 +41,7 @@ $(TARGET): $(OBJS)
 
 # Clean rule to remove compiled binaries and object files
 clean:
-	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET)
+	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
 
 # Phony targets (prevents conflicts if files named 'all' or 'clean' exist)
-.PHONY: all clean compiler
+.PHONY: all clean compiler disassembler

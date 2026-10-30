@@ -1,6 +1,7 @@
 # Compiled Binaries
 chip8
 compiler
+disassembler
 
 # Object files and libraries
 *.o

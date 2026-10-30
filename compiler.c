@@ -36,8 +36,22 @@ static char *trim_whitespace(char *str) {
     return str;
 }
 
-// Helper: Strip comments (starting with ;, #, or //)
+// Helper: Strip comments (starting with ;, #, //, or /* ... */)
 static void strip_comments(char *line) {
+    // Handle /* ... */ block comments on a line
+    char *block_start = strstr(line, "/*");
+    while (block_start) {
+        char *block_end = strstr(block_start + 2, "*/");
+        if (block_end) {
+            // Replace the comment region with spaces to preserve surrounding text
+            memset(block_start, ' ', (block_end + 2) - block_start);
+            block_start = strstr(block_end + 2, "/*");
+        } else {
+            *block_start = '\0';
+            break;
+        }
+    }
+
     char *comment = NULL;
     char *c1 = strchr(line, ';');
     char *c2 = strchr(line, '#');
