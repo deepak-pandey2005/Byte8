@@ -14,6 +14,7 @@ TARGET = chip8
 COMPILER_TARGET = compiler
 DISASM_TARGET = disassembler
 WASM_TARGET = web/chip8.wasm
+TEST_TARGET = tests/test_opcodes
 
 # Source files
 SRCS = src/main.c src/chip8.c
@@ -23,6 +24,10 @@ OBJS = $(SRCS:.c=.o)
 
 # Default rule (runs when you just type 'make')
 all: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(WASM_TARGET)
+
+# Rule to run the automated test suite
+test: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
+	@./tests/run_tests.sh
 
 # Rule to build the assembler/compiler
 $(COMPILER_TARGET): compiler.c
@@ -46,7 +51,7 @@ $(TARGET): $(OBJS)
 
 # Clean rule to remove compiled binaries and object files
 clean:
-	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(WASM_TARGET)
+	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(WASM_TARGET) $(TEST_TARGET)
 
 # Phony targets (prevents conflicts if files named 'all' or 'clean' exist)
-.PHONY: all clean compiler disassembler wasm
+.PHONY: all clean compiler disassembler wasm test
