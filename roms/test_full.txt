@@ -1,0 +1,44 @@
+# Comprehensive CHIP-8 Assembly Test
+start:
+    cls
+    v0 = 10
+    v1 = 20
+    v2 = 0x1F
+    call draw_char
+
+loop:
+    v0 += 1
+    if v0 == 30
+    jump reset_v0
+
+    if v0 != v1
+    v2 += v1
+
+    # Bitwise and shifts
+    v3 = v2
+    v3 |= v1
+    v3 &= v0
+    v3 ^= v2
+    v3 >>= 1
+    v3 <<= 1
+
+    # Timers and key
+    delay = v0
+    sound = v1
+    v4 = delay
+
+    jump loop
+
+reset_v0:
+    v0 = 0
+    jump loop
+
+draw_char:
+    i = sprite_pattern
+    draw v0, v1, 5
+    ret
+
+# Sprite pattern defined with binary and hex bytes
+sprite_pattern:
+    db 0b00111100, 0b01000010, 0b11111111
+    db 0x81, 0x81
