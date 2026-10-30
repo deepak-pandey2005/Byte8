@@ -13,6 +13,7 @@ LDFLAGS = -lSDL2
 TARGET = chip8
 COMPILER_TARGET = compiler
 DISASM_TARGET = disassembler
+WASM_TARGET = web/chip8.wasm
 
 # Source files
 SRCS = src/main.c src/chip8.c
@@ -21,7 +22,7 @@ SRCS = src/main.c src/chip8.c
 OBJS = $(SRCS:.c=.o)
 
 # Default rule (runs when you just type 'make')
-all: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
+all: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(WASM_TARGET)
 
 # Rule to build the assembler/compiler
 $(COMPILER_TARGET): compiler.c
@@ -30,6 +31,10 @@ $(COMPILER_TARGET): compiler.c
 # Rule to build the disassembler
 $(DISASM_TARGET): disassembler.c
 	$(CC) $(CFLAGS) disassembler.c -o $(DISASM_TARGET)
+
+# Rule to build WebAssembly binary
+$(WASM_TARGET): web/chip8_wasm.c src/chip8.h
+	clang --target=wasm32 -nostdlib -O3 -Wl,--no-entry -Wl,--export-all -Wl,--allow-undefined -o $(WASM_TARGET) web/chip8_wasm.c
 
 # Rule to link the executable
 $(TARGET): $(OBJS)
@@ -41,7 +46,7 @@ $(TARGET): $(OBJS)
 
 # Clean rule to remove compiled binaries and object files
 clean:
-	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
+	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(WASM_TARGET)
 
 # Phony targets (prevents conflicts if files named 'all' or 'clean' exist)
-.PHONY: all clean compiler disassembler
+.PHONY: all clean compiler disassembler wasm
