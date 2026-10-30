@@ -112,6 +112,14 @@
         <option value="../roms/demo.ch8">Logo & Font Demo</option>
       </select>
 
+      <select id="themeSelect">
+        <option value="cyber">Cyber Cyan</option>
+        <option value="matrix">Matrix Green</option>
+        <option value="amber">Amber CRT</option>
+        <option value="gameboy">Game Boy</option>
+        <option value="classic">Classic B&W</option>
+      </select>
+
       <button id="loadBtn" class="primary">Load Selected</button>
       <button id="resetBtn">Restart</button>
 
@@ -135,9 +143,26 @@
     const canvas = document.getElementById('screen');
     const ctx = canvas.getContext('2d');
     const romSelect = document.getElementById('romSelect');
+    const themeSelect = document.getElementById('themeSelect');
     const loadBtn = document.getElementById('loadBtn');
     const resetBtn = document.getElementById('resetBtn');
     const fileInput = document.getElementById('fileInput');
+
+    const THEMES = {
+      cyber:   { bg: '#100c24', fg: '#00ffcc', border: '#00ffcc' },
+      matrix:  { bg: '#051205', fg: '#00ff46', border: '#00ff46' },
+      amber:   { bg: '#180e02', fg: '#ffb000', border: '#ffb000' },
+      gameboy: { bg: '#0f380f', fg: '#9bbc0f', border: '#9bbc0f' },
+      classic: { bg: '#000000', fg: '#ffffff', border: '#8892b0' },
+    };
+    let currentTheme = THEMES.cyber;
+
+    themeSelect.addEventListener('change', () => {
+      currentTheme = THEMES[themeSelect.value] || THEMES.cyber;
+      canvas.style.borderColor = currentTheme.border;
+      canvas.style.boxShadow = `0 0 16px ${currentTheme.border}44`;
+      if (wasmExports) renderScreen();
+    });
 
     const SCALE = 10;
     const VIDEO_WIDTH = 64;
@@ -198,10 +223,10 @@
 
     function renderScreen() {
       const gfx = new Uint8Array(wasmMemory.buffer, gfxBufferOffset, VIDEO_WIDTH * VIDEO_HEIGHT);
-      ctx.fillStyle = '#000000';
+      ctx.fillStyle = currentTheme.bg;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      ctx.fillStyle = '#00ffcc';
+      ctx.fillStyle = currentTheme.fg;
       for (let y = 0; y < VIDEO_HEIGHT; y++) {
         for (let x = 0; x < VIDEO_WIDTH; x++) {
           if (gfx[y * VIDEO_WIDTH + x]) {

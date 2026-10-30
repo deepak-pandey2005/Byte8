@@ -16,11 +16,27 @@ typedef struct {
 } AudioState;
 
 typedef struct {
+  const char *name;
+  uint8_t bg_r, bg_g, bg_b;
+  uint8_t fg_r, fg_g, fg_b;
+} ColorTheme;
+
+static const ColorTheme COLOR_THEMES[] = {
+  { "classic",  0,   0,   0,   255, 255, 255 }, // Classic black & white
+  { "matrix",   5,  18,   5,     0, 255,  70 }, // Terminal matrix phosphor green
+  { "amber",   24,  14,   2,   255, 176,   0 }, // Vintage amber monochrome CRT
+  { "gameboy", 15,  56,  15,   155, 188,  15 }, // Nintendo Game Boy green tint
+  { "cyber",   16,  12,  36,     0, 255, 204 }, // Synthwave cyan on dark purple
+};
+#define THEME_COUNT ((int)(sizeof(COLOR_THEMES) / sizeof(COLOR_THEMES[0])))
+
+typedef struct {
   const char *rom_path;
   int scale;
   int clock_speed; // in Hz (default: 540)
   int fps;         // in Hz (default: 60)
   bool mute;
+  ColorTheme theme;
 } EmulatorConfig;
 
 // SDL Audio Callback generating a smooth 440 Hz square wave beep
@@ -83,8 +99,19 @@ static void print_usage(const char *prog_name) {
   printf("  --scale <num>        Pixel scale factor (default: 10, e.g. 15 for 960x480)\n");
   printf("  --clock-speed <hz>   CPU clock speed in Hz (default: 540)\n");
   printf("  --fps <num>          Display/timer refresh rate in Hz (default: 60)\n");
+  printf("  --theme <name>       Color theme (classic, matrix, amber, gameboy, cyber)\n");
   printf("  --mute               Disable audio buzzer\n");
   printf("  -h, --help           Show this help message\n");
+}
+
+static bool parse_theme(const char *name, ColorTheme *out_theme) {
+  for (int i = 0; i < THEME_COUNT; i++) {
+    if (strcasecmp(name, COLOR_THEMES[i].name) == 0) {
+      *out_theme = COLOR_THEMES[i];
+      return true;
+    }
+  }
+  return false;
 }
 
 static int parse_args(int argc, char **argv, EmulatorConfig *config) {
@@ -93,6 +120,7 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
   config->clock_speed = 540;
   config->fps = 60;
   config->mute = false;
+  config->theme = COLOR_THEMES[0]; // default: classic
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -114,6 +142,12 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
       config->fps = atoi(argv[++i]);
       if (config->fps < 10 || config->fps > 240) {
         fprintf(stderr, "Error: --fps must be between 10 and 240.\n");
+        return -1;
+      }
+    } else if (strcmp(argv[i], "--theme") == 0 && i + 1 < argc) {
+      const char *tname = argv[++i];
+      if (!parse_theme(tname, &config->theme)) {
+        fprintf(stderr, "Error: Unknown theme '%s'. Valid themes: classic, matrix, amber, gameboy, cyber\n", tname);
         return -1;
       }
     } else if (strcmp(argv[i], "--mute") == 0) {
@@ -179,10 +213,10 @@ int main(int argc, char **argv) {
   int win_width = VIDEO_WIDTH * config.scale;
   int win_height = VIDEO_HEIGHT * config.scale;
 
-  char window_title[128];
+  char window_title[160];
   snprintf(window_title, sizeof(window_title),
-           "Byte8 CHIP-8 Emulator [%d Hz, %d FPS]",
-           config.clock_speed, config.fps);
+           "Byte8 CHIP-8 Emulator [%s | %d Hz, %d FPS]",
+           config.theme.name, config.clock_speed, config.fps);
 
   SDL_Window *window = SDL_CreateWindow(
       window_title,
@@ -208,8 +242,8 @@ int main(int argc, char **argv) {
   Uint32 last_timer_update = SDL_GetTicks();
   bool running = true;
 
-  printf("Running %s at %d Hz CPU, %d FPS, %dx scale (Window: %dx%d)%s\n",
-         config.rom_path, config.clock_speed, config.fps, config.scale,
+  printf("Running %s at %d Hz CPU, %d FPS, theme='%s', %dx scale (Window: %dx%d)%s\n",
+         config.rom_path, config.clock_speed, config.fps, config.theme.name, config.scale,
          win_width, win_height, config.mute ? " [Muted]" : "");
 
   while (running) {
@@ -253,10 +287,18 @@ int main(int argc, char **argv) {
 
     // Render if screen updated
     if (chip8.draw_flag) {
-      SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+      SDL_SetRenderDrawColor(renderer,
+                             config.theme.bg_r,
+                             config.theme.bg_g,
+                             config.theme.bg_b,
+                             255);
       SDL_RenderClear(renderer);
 
-      SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+      SDL_SetRenderDrawColor(renderer,
+                             config.theme.fg_r,
+                             config.theme.fg_g,
+                             config.theme.fg_b,
+                             255);
       for (int y = 0; y < VIDEO_HEIGHT; y++) {
         for (int x = 0; x < VIDEO_WIDTH; x++) {
           if (chip8.gfx[y * VIDEO_WIDTH + x]) {
