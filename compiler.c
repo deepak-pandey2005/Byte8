@@ -614,8 +614,16 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
                         // 8XY5: vX -= vY
                         op = 0x8005 | (vx << 8) | (vy << 4);
                     } else {
-                        fprintf(stderr, "Error at line %d: CHIP-8 only supports register subtraction (vX -= vY).\n", line_num);
-                        return -1;
+                        // CHIP-8 doesn't have 8-bit immediate subtract, but 7XNN adds NN.
+                        // Adding (256 - NN) is mathematically identical to subtracting NN modulo 256.
+                        long imm;
+                        if (parse_number(rhs, &imm) && imm >= 0 && imm <= 255) {
+                            uint8_t sub_val = (uint8_t)((256 - imm) & 0xFF);
+                            op = 0x7000 | (vx << 8) | sub_val;
+                        } else {
+                            fprintf(stderr, "Error at line %d: Invalid operand for '-=': %s\n", line_num, rhs);
+                            return -1;
+                        }
                     }
                 } else if (strncmp(op_ptr, "|=", 2) == 0) {
                     int vy = parse_register(rhs);

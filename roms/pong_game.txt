@@ -1,0 +1,168 @@
+# Pong Game for Byte8 CHIP-8
+# Standard CHIP-8 resolution: 64x32
+# Controls:
+#   v5, v6: Paddle 1 Y, Paddle 2 Y
+#   v7, v8: Ball X, Ball Y
+#   v9, vA: Ball Vel X, Ball Vel Y
+#   vB, vC: Score 1, Score 2
+
+start:
+    cls
+    v5 = 12         ; Paddle 1 Y (left, x=2)
+    v6 = 12         ; Paddle 2 Y (right, x=61)
+    vB = 0          ; Score 1
+    vC = 0          ; Score 2
+
+reset_ball:
+    v7 = 31         ; Ball X center
+    v8 = 15         ; Ball Y center
+    v9 = 1          ; Vel X (1 = right)
+    vA = 1          ; Vel Y (1 = down)
+
+draw_all:
+    cls
+    # Draw left paddle (x=2, y=v5, height=5)
+    v0 = 2
+    v1 = v5
+    i = paddle_sprite
+    draw v0, v1, 5
+
+    # Draw right paddle (x=61, y=v6, height=5)
+    v0 = 61
+    v1 = v6
+    i = paddle_sprite
+    draw v0, v1, 5
+
+    # Draw ball (x=v7, y=v8, height=2)
+    v0 = v7
+    v1 = v8
+    i = ball_sprite
+    draw v0, v1, 2
+
+game_loop:
+    # ----------------------------------------
+    # Simple AI / auto move for right paddle: follow ball Y
+    # ----------------------------------------
+    if v6 == v8
+    jump check_left_paddle
+
+    # If paddle Y < ball Y, move paddle down
+    v6 += 1
+    if v6 != 27
+    jump check_left_paddle
+    v6 = 26
+
+check_left_paddle:
+    # Follow ball with slight lag
+    if v5 == v8
+    jump move_ball
+
+    v5 += 1
+    if v5 != 27
+    jump move_ball
+    v5 = 26
+
+move_ball:
+    # ----------------------------------------
+    # Move ball in X
+    # ----------------------------------------
+    if v9 == 1
+    jump ball_moving_right
+
+ball_moving_left:
+    v7 -= 1
+    # Check left paddle bounce (x=3)
+    if v7 != 3
+    jump check_left_wall
+
+    # Check if ball Y is near paddle 1 Y
+    v0 = v8
+    if v0 == v5
+    jump bounce_x
+    v0 += 1
+    if v0 == v5
+    jump bounce_x
+    v0 += 1
+    if v0 == v5
+    jump bounce_x
+
+check_left_wall:
+    if v7 == 0
+    jump score_p2
+    jump update_y
+
+ball_moving_right:
+    v7 += 1
+    # Check right paddle bounce (x=60)
+    if v7 != 60
+    jump check_right_wall
+
+    # Check if ball Y is near paddle 2 Y
+    v0 = v8
+    if v0 == v6
+    jump bounce_x
+    v0 += 1
+    if v0 == v6
+    jump bounce_x
+    v0 += 1
+    if v0 == v6
+    jump bounce_x
+
+check_right_wall:
+    if v7 == 63
+    jump score_p1
+    jump update_y
+
+bounce_x:
+    # Flip horizontal direction
+    if v9 == 1
+    jump set_vx_neg
+    v9 = 1
+    jump update_y
+
+set_vx_neg:
+    v9 = 0
+    jump update_y
+
+update_y:
+    # ----------------------------------------
+    # Move ball in Y
+    # ----------------------------------------
+    if vA == 1
+    jump ball_down
+
+ball_up:
+    v8 -= 1
+    if v8 == 0
+    vA = 1
+    jump render_frame
+
+ball_down:
+    v8 += 1
+    if v8 == 30
+    vA = 0
+
+render_frame:
+    jump draw_all
+
+score_p1:
+    vB += 1
+    jump reset_ball
+
+score_p2:
+    vC += 1
+    jump reset_ball
+
+# --------------------------------------------
+# Sprites
+# --------------------------------------------
+paddle_sprite:
+    db 0b10000000
+    db 0b10000000
+    db 0b10000000
+    db 0b10000000
+    db 0b10000000
+
+ball_sprite:
+    db 0b11000000
+    db 0b11000000
