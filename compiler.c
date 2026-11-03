@@ -92,8 +92,20 @@ static void strip_comments(char *line) {
 
     char *comment = NULL;
     char *c1 = strchr(line, ';');
-    char *c2 = is_hash_directive ? NULL : strchr(line, '#');
     char *c3 = strstr(line, "//");
+
+    // Look for '#' comment that is either at the beginning of the line or preceded by whitespace
+    char *c2 = NULL;
+    if (!is_hash_directive) {
+        char *p = line;
+        while ((p = strchr(p, '#')) != NULL) {
+            if (p == line || isspace((unsigned char)*(p - 1))) {
+                c2 = p;
+                break;
+            }
+            p++;
+        }
+    }
 
     if (c1) comment = c1;
     if (c2 && (!comment || c2 < comment)) comment = c2;
@@ -518,6 +530,16 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
         op = 0x00E0;
     } else if (strcasecmp(line, "ret") == 0 || strcasecmp(line, "return") == 0) {
         op = 0x00EE;
+    } else if (strncasecmp(line, "sys ", 4) == 0) {
+        char target[MAX_LABEL_LEN];
+        if (sscanf(line + 4, "%63s", target) == 1) {
+            uint16_t addr = 0;
+            if (!resolve_address(target, table, &addr, file, line_num)) return -1;
+            op = (addr & 0x0FFF); // 0NNN: sys call
+        } else {
+            fprintf(stderr, "Syntax Error in %s:%d: Missing sys target.\n", file, line_num);
+            return -1;
+        }
     } else if (strncasecmp(line, "jump ", 5) == 0 || strncasecmp(line, "jp ", 3) == 0) {
         char target[MAX_LABEL_LEN];
         const char *arg = (strncasecmp(line, "jump ", 5) == 0) ? line + 5 : line + 3;
@@ -889,9 +911,9 @@ int main(int argc, char **argv) {
                 return 1;
             }
 
-            if (current_address + byte_size > MAX_ADDRESS) {
-                fprintf(stderr, "Error in %s:%d: Program size exceeded CHIP-8 memory limit (0x%03X).\n",
-                        ps.lines[i].filename, ps.lines[i].line_number, MAX_ADDRESS);
+            if ((uint32_t)current_address + (uint32_t)byte_size > (MAX_ADDRESS + 1)) {
+                fprintf(stderr, "Error in %s:%d: Program size exceeded CHIP-8 memory limit (0x%03X). Current: 0x%03X, Size: %d\n",
+                        ps.lines[i].filename, ps.lines[i].line_number, MAX_ADDRESS, current_address, byte_size);
                 return 1;
             }
             current_address += byte_size;

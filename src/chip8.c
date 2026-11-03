@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <time.h>
+
 static const uint8_t chip8_fontset[80] = {
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -27,17 +29,20 @@ void chip8_init(Chip8 *chip8) {
   memset(chip8, 0, sizeof(Chip8));
   chip8->pc = 0x200; // CHIP-8 programs start at 0x200
 
+  // Seed the random number generator
+  srand((unsigned int)time(NULL));
+
   // Load fontset into memory at 0x050
   memcpy(&chip8->memory[FONTSET_START_ADDRESS], chip8_fontset, sizeof(chip8_fontset));
 }
 
-void chip8_load_rom(Chip8 *chip8, const char *filename) {
+bool chip8_load_rom(Chip8 *chip8, const char *filename) {
   printf("LOADING : %s \n", filename);
   FILE *file = fopen(filename, "rb");
 
   if (!file) {
     fprintf(stderr, "FAILED TO OPEN ROM: %s\n", filename);
-    exit(1);
+    return false;
   }
 
   fseek(file, 0, SEEK_END);
@@ -46,21 +51,22 @@ void chip8_load_rom(Chip8 *chip8, const char *filename) {
 
   printf("ROM SIZE: %ld bytes\n", size);
 
-  if (size > (4096 - 0x200)) {
-    fprintf(stderr, "ERROR: ROM too large\n");
+  if (size <= 0 || size > (4096 - 0x200)) {
+    fprintf(stderr, "ERROR: Invalid ROM size (%ld bytes)\n", size);
     fclose(file);
-    exit(1);
+    return false;
   }
 
   size_t result = fread(&chip8->memory[0x200], 1, size, file);
   if (result != (size_t)size) {
     fprintf(stderr, "READING ERROR\n");
     fclose(file);
-    exit(1);
+    return false;
   }
 
   fclose(file);
   printf("ROM loaded successfully\n");
+  return true;
 }
 
 #define BYTE8_SAVESTATE_MAGIC 0x38455459 // "BYTE" in little-endian
@@ -173,7 +179,8 @@ void chip8_cycle(Chip8 *chip8) {
       break;
 
     default:
-      printf("[WARN] Unknown 0x0000 opcode: 0x%04X\n", op);
+      // 0NNN → Call RCA 1802 machine language routine at NNN (legacy no-op in modern interpreters)
+      printf("[INFO] Legacy machine routine 0x%04X ignored\n", op);
       break;
     }
     break;

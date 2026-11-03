@@ -255,7 +255,31 @@ static void test_savestate() {
     TEST_ASSERT(c2.delay_timer == 60 && c2.sound_timer == 30, "Savestate restores timers");
     TEST_ASSERT(c2.gfx[100] == 1, "Savestate restores graphics buffer");
 
+    // Negative tests: Invalid files, bad magic, wrong version
+    FILE *bad_f = fopen(tmp_state, "wb");
+    uint32_t bad_data[4] = { 0xDEADBEEF, 1, 0, 0 };
+    fwrite(bad_data, sizeof(uint32_t), 4, bad_f);
+    fclose(bad_f);
+    TEST_ASSERT(!chip8_load_state(&c2, tmp_state), "chip8_load_state rejects corrupted/bad magic");
+
+    FILE *trunc_f = fopen(tmp_state, "wb");
+    uint8_t byte = 0x42;
+    fwrite(&byte, 1, 1, trunc_f);
+    fclose(trunc_f);
+    TEST_ASSERT(!chip8_load_state(&c2, tmp_state), "chip8_load_state rejects truncated savestate");
+
+    TEST_ASSERT(!chip8_load_state(&c2, "/nonexistent/path/state.bin"), "chip8_load_state rejects nonexistent file");
+    TEST_ASSERT(!chip8_save_state(&c1, "/nonexistent/dir/cannot_write.bin"), "chip8_save_state rejects unwriteable path");
+
     remove(tmp_state);
+}
+
+static void test_legacy_sys() {
+    Chip8 c;
+    chip8_init(&c);
+    c.pc = 0x200;
+    run_one_opcode(&c, 0x0123);
+    TEST_ASSERT(c.pc == 0x202, "0NNN legacy sys call handled without error as no-op");
 }
 
 int main(void) {
@@ -270,6 +294,7 @@ int main(void) {
     test_index_and_memory();
     test_graphics_and_collision();
     test_savestate();
+    test_legacy_sys();
 
     printf("Results: %d / %d tests passed\n", passed_tests, total_tests);
     if (passed_tests == total_tests) {

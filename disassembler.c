@@ -23,7 +23,7 @@ static void disassemble_opcode(uint16_t addr, uint16_t op, FILE *out) {
         } else if (op == 0x00EE) {
             fprintf(out, "ret\n");
         } else {
-            fprintf(out, "db 0x%02X, 0x%02X  ; unknown 0x0000 syscall\n", (op >> 8) & 0xFF, op & 0xFF);
+            fprintf(out, "sys 0x%03X\n", nnn);
         }
         break;
 

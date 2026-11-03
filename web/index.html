@@ -122,6 +122,16 @@
 
       <button id="loadBtn" class="primary">Load Selected</button>
       <button id="resetBtn">Restart</button>
+      <button id="saveStateBtn">Save State</button>
+      <button id="loadStateBtn">Load State</button>
+
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+        <label for="volSlider" style="padding: 0; border: none; background: none;">Vol:</label>
+        <input type="range" id="volSlider" min="0" max="100" value="50" style="width: 80px; cursor: pointer;">
+        <label style="padding: 0; border: none; background: none; display: flex; align-items: center; gap: 4px;">
+          <input type="checkbox" id="muteCheck" style="cursor: pointer;"> Mute
+        </label>
+      </div>
 
       <label style="cursor: pointer;">
         Upload ROM (.ch8)
@@ -146,6 +156,10 @@
     const themeSelect = document.getElementById('themeSelect');
     const loadBtn = document.getElementById('loadBtn');
     const resetBtn = document.getElementById('resetBtn');
+    const saveStateBtn = document.getElementById('saveStateBtn');
+    const loadStateBtn = document.getElementById('loadStateBtn');
+    const volSlider = document.getElementById('volSlider');
+    const muteCheck = document.getElementById('muteCheck');
     const fileInput = document.getElementById('fileInput');
 
     const THEMES = {
@@ -193,9 +207,21 @@
       oscNode.start();
     }
 
+    let currentVolume = 0.5;
+    let isMuted = false;
+
+    volSlider.addEventListener('input', () => {
+      currentVolume = parseInt(volSlider.value, 10) / 100.0;
+    });
+
+    muteCheck.addEventListener('change', () => {
+      isMuted = muteCheck.checked;
+    });
+
     function setBuzzer(active) {
       if (!gainNode || !audioCtx) return;
-      gainNode.gain.setTargetAtTime(active ? 0.08 : 0, audioCtx.currentTime, 0.015);
+      const targetGain = (active && !isMuted) ? (0.15 * currentVolume) : 0;
+      gainNode.gain.setTargetAtTime(targetGain, audioCtx.currentTime, 0.015);
     }
 
     // Hex keypad mapping
@@ -300,6 +326,39 @@
       if (currentRomBytes) {
         loadRom(currentRomBytes);
       }
+    });
+
+    saveStateBtn.addEventListener('click', () => {
+      if (!wasmExports) return;
+      const statePtr = wasmExports.chip8_wasm_get_state_buffer();
+      const stateSize = wasmExports.chip8_wasm_get_state_size();
+      const stateBytes = new Uint8Array(wasmMemory.buffer, statePtr, stateSize);
+      let binaryStr = '';
+      for (let i = 0; i < stateSize; i++) {
+        binaryStr += String.fromCharCode(stateBytes[i]);
+      }
+      localStorage.setItem('byte8_savestate', btoa(binaryStr));
+      alert('State saved successfully to browser storage!');
+    });
+
+    loadStateBtn.addEventListener('click', () => {
+      if (!wasmExports) return;
+      const saved = localStorage.getItem('byte8_savestate');
+      if (!saved) {
+        alert('No saved state found in browser storage.');
+        return;
+      }
+      initAudio();
+      const binaryStr = atob(saved);
+      const statePtr = wasmExports.chip8_wasm_get_state_buffer();
+      const stateSize = wasmExports.chip8_wasm_get_state_size();
+      const stateBytes = new Uint8Array(wasmMemory.buffer, statePtr, stateSize);
+      for (let i = 0; i < stateSize && i < binaryStr.length; i++) {
+        stateBytes[i] = binaryStr.charCodeAt(i);
+      }
+      wasmExports.chip8_wasm_notify_state_loaded();
+      renderScreen();
+      alert('State loaded successfully!');
     });
 
     fileInput.addEventListener('change', (e) => {

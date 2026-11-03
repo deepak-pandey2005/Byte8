@@ -265,7 +265,9 @@ int main(int argc, char **argv) {
 
   Chip8 chip8;
   chip8_init(&chip8);
-  chip8_load_rom(&chip8, config.rom_path);
+  if (!chip8_load_rom(&chip8, config.rom_path)) {
+    return 1;
+  }
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) < 0) {
     fprintf(stderr, "SDL Init failed: %s\n", SDL_GetError());
@@ -358,7 +360,9 @@ int main(int argc, char **argv) {
   printf("Audio: %s (Pitch: %d Hz, Volume: %d%%, Wave: %s)\n",
          config.mute ? "Disabled [Muted]" : "Enabled",
          config.pitch, config.mute ? 0 : config.volume, wave_names[config.waveform]);
-  printf("Hotkeys: [F5] Save State | [F9] Load State | [F11] Fullscreen | [Esc] Exit\n");
+  printf("Hotkeys: [P/Space] Pause | [F5] Save State | [F9] Load State | [F11] Fullscreen | [Esc] Exit\n");
+
+  bool is_paused = false;
 
   while (running) {
     SDL_Event event;
@@ -368,6 +372,11 @@ int main(int argc, char **argv) {
       } else if (event.type == SDL_KEYDOWN) {
         if (event.key.keysym.sym == SDLK_ESCAPE) {
           running = false;
+        } else if (event.key.keysym.sym == SDLK_p || event.key.keysym.sym == SDLK_SPACE) {
+          is_paused = !is_paused;
+          char updated_title[200];
+          snprintf(updated_title, sizeof(updated_title), "%s%s", window_title, is_paused ? " [PAUSED]" : "");
+          SDL_SetWindowTitle(window, updated_title);
         } else if (event.key.keysym.sym == SDLK_F11) {
           is_fullscreen = !is_fullscreen;
           SDL_SetWindowFullscreen(window, is_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
@@ -392,20 +401,29 @@ int main(int argc, char **argv) {
       }
     }
 
-    // Run CPU cycles for this frame slice
-    for (int i = 0; i < cycles_per_frame; i++) {
-      chip8_cycle(&chip8);
-    }
+    if (!is_paused) {
+      // Run CPU cycles for this frame slice
+      for (int i = 0; i < cycles_per_frame; i++) {
+        chip8_cycle(&chip8);
+      }
 
-    // Timer decrement at configured rate (standard 60 Hz)
-    Uint32 current_time = SDL_GetTicks();
-    if ((double)(current_time - last_timer_update) >= timer_interval_ms) {
-      chip8_update_timers(&chip8);
-      last_timer_update = current_time;
+      // Timer decrement at configured rate (standard 60 Hz)
+      Uint32 current_time = SDL_GetTicks();
+      if ((double)(current_time - last_timer_update) >= timer_interval_ms) {
+        chip8_update_timers(&chip8);
+        last_timer_update = current_time;
 
+        if (audio_device != 0) {
+          SDL_LockAudioDevice(audio_device);
+          audio_state.playing = (chip8.sound_timer > 0);
+          SDL_UnlockAudioDevice(audio_device);
+        }
+      }
+    } else {
+      // Mute audio while paused
       if (audio_device != 0) {
         SDL_LockAudioDevice(audio_device);
-        audio_state.playing = (chip8.sound_timer > 0);
+        audio_state.playing = false;
         SDL_UnlockAudioDevice(audio_device);
       }
     }

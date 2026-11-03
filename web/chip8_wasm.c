@@ -75,6 +75,18 @@ WASM_EXPORT int chip8_wasm_get_draw_flag(void) {
     return chip8_instance.draw_flag ? 1 : 0;
 }
 
+WASM_EXPORT uint8_t *chip8_wasm_get_state_buffer(void) {
+    return (uint8_t *)&chip8_instance;
+}
+
+WASM_EXPORT int chip8_wasm_get_state_size(void) {
+    return (int)sizeof(Chip8);
+}
+
+WASM_EXPORT void chip8_wasm_notify_state_loaded(void) {
+    chip8_instance.draw_flag = true;
+}
+
 WASM_EXPORT void chip8_wasm_clear_draw_flag(void) {
     chip8_instance.draw_flag = false;
 }
