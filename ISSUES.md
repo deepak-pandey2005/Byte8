@@ -1,21 +1,23 @@
-# Byte8 Issue Backlog & Roadmap
+# Byte8 GitHub Issues & Roadmap
 
-This document outlines **10 structured engineering issues** for the Byte8 CHIP-8 ecosystem, covering the emulator core, assembler compiler, disassembler, web player, user interface, and developer tooling. Each issue includes detailed specifications, affected components, implementation steps, and acceptance criteria.
+This document indexes the **10 active GitHub issues** created for the Byte8 repository on GitHub ([deepak-pandey2005/Byte8/issues](https://github.com/deepak-pandey2005/Byte8/issues)). Each issue is live and tracked on GitHub with detailed specifications and acceptance criteria.
 
 ---
 
-## Table of Contents
+## Live GitHub Issues
 
-1. [Issue #1: Interactive Terminal / TUI Debugger (`--debug`)](#issue-1-interactive-terminal--tui-debugger---debug)
-2. [Issue #2: Execution Breakpoints and Memory Watchpoints (`--break`, `--watch`)](#issue-2-execution-breakpoints-and-memory-watchpoints---break---watch)
-3. [Issue #3: SUPER-CHIP (SCHIP-8) Extended Opcode & Hi-Res Mode (128x64)](#issue-3-super-chip-schip-8-extended-opcode--hi-res-mode-128x64)
-4. [Issue #4: Disassembler Intelligent Label Reconstruction Pass](#issue-4-disassembler-intelligent-label-reconstruction-pass)
-5. [Issue #5: Compiler Multi-Line Parameterized Macro System (`#macro` / `#endmacro`)](#issue-5-compiler-multi-line-parameterized-macro-system-macro--endmacro)
-6. [Issue #6: Dynamic Keypad Rebinding & Custom Layout Profiles (`--keymap`)](#issue-6-dynamic-keypad-rebinding--custom-layout-profiles---keymap)
-7. [Issue #7: Arbitrary Hex Color Theming & CRT Scanline Post-Processing](#issue-7-arbitrary-hex-color-theming--crt-scanline-post-processing)
-8. [Issue #8: Native Gamepad & Controller Support via SDL2 GameController API](#issue-8-native-gamepad--controller-support-via-sdl2-gamecontroller-api)
-9. [Issue #9: Authentic Retro Game Implementation: Space Invaders in Byte8 Assembly](#issue-9-authentic-retro-game-implementation-space-invaders-in-byte8-assembly)
-10. [Issue #10: Automated CI/CD Pipeline with GitHub Actions & Pages Deployment](#issue-10-automated-cicd-pipeline-with-github-actions--pages-deployment)
+| Issue # | Title | GitHub Link | Labels |
+|---|---|---|---|
+| **#1** | Interactive Terminal / TUI Debugger (`--debug`) | [#1](https://github.com/deepak-pandey2005/Byte8/issues/1) | `enhancement` |
+| **#2** | Execution Breakpoints and Memory Watchpoints (`--break`, `--watch`) | [#2](https://github.com/deepak-pandey2005/Byte8/issues/2) | `enhancement` |
+| **#3** | SUPER-CHIP (SCHIP-8) Extended Opcode & Hi-Res Mode (128x64) | [#3](https://github.com/deepak-pandey2005/Byte8/issues/3) | `enhancement` |
+| **#4** | Disassembler Intelligent Label Reconstruction Pass | [#4](https://github.com/deepak-pandey2005/Byte8/issues/4) | `enhancement` |
+| **#5** | Compiler Multi-Line Parameterized Macro System (`#macro` / `#endmacro`) | [#5](https://github.com/deepak-pandey2005/Byte8/issues/5) | `enhancement` |
+| **#6** | Dynamic Keypad Rebinding & Custom Layout Profiles (`--keymap`) | [#6](https://github.com/deepak-pandey2005/Byte8/issues/6) | `enhancement` |
+| **#7** | Arbitrary Hex Color Theming & CRT Scanline Post-Processing | [#7](https://github.com/deepak-pandey2005/Byte8/issues/7) | `enhancement` |
+| **#8** | Native Gamepad & Controller Support via SDL2 GameController API | [#8](https://github.com/deepak-pandey2005/Byte8/issues/8) | `enhancement` |
+| **#9** | Authentic Retro Game Implementation: Space Invaders in Byte8 Assembly | [#9](https://github.com/deepak-pandey2005/Byte8/issues/9) | `enhancement` |
+| **#10** | Automated CI/CD Pipeline with GitHub Actions & Pages Deployment | [#10](https://github.com/deepak-pandey2005/Byte8/issues/10) | `enhancement` |
 
 ---
 
@@ -319,3 +321,4 @@ Create a production-grade GitHub Actions CI workflow in `.github/workflows/ci.ym
 - Pushing to repository triggers GitHub Actions workflow.
 - All builds and tests pass cleanly with zero warnings or errors.
 - Web emulator is continuously deployed and accessible on GitHub Pages.
+
