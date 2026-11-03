@@ -349,12 +349,16 @@ int main(int argc, char **argv) {
   Uint32 last_timer_update = SDL_GetTicks();
   bool running = true;
 
+  char savestate_filename[512];
+  snprintf(savestate_filename, sizeof(savestate_filename), "%s.state", config.rom_path);
+
   printf("Running %s at %d Hz, %d FPS, theme='%s', scale=%dx (Window: %dx%d)\n",
          config.rom_path, config.clock_speed, config.fps, config.theme.name, config.scale,
          win_width, win_height);
   printf("Audio: %s (Pitch: %d Hz, Volume: %d%%, Wave: %s)\n",
          config.mute ? "Disabled [Muted]" : "Enabled",
          config.pitch, config.mute ? 0 : config.volume, wave_names[config.waveform]);
+  printf("Hotkeys: [F5] Save State | [F9] Load State | [F11] Fullscreen | [Esc] Exit\n");
 
   while (running) {
     SDL_Event event;
@@ -365,9 +369,16 @@ int main(int argc, char **argv) {
         if (event.key.keysym.sym == SDLK_ESCAPE) {
           running = false;
         } else if (event.key.keysym.sym == SDLK_F11) {
-          // Toggle fullscreen
           is_fullscreen = !is_fullscreen;
           SDL_SetWindowFullscreen(window, is_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+        } else if (event.key.keysym.sym == SDLK_F5) {
+          if (chip8_save_state(&chip8, savestate_filename)) {
+            printf("[SAVESTATE] Saved state to: %s\n", savestate_filename);
+          }
+        } else if (event.key.keysym.sym == SDLK_F9) {
+          if (chip8_load_state(&chip8, savestate_filename)) {
+            printf("[SAVESTATE] Loaded state from: %s\n", savestate_filename);
+          }
         }
         int k = map_sdl_key_to_chip8(event.key.keysym.sym);
         if (k != -1) {

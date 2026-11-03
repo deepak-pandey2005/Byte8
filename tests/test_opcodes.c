@@ -230,6 +230,34 @@ static void test_graphics_and_collision() {
     TEST_ASSERT(c.gfx[5 * VIDEO_WIDTH + 10] == 0, "DXYN pixel XOR erased back to 0");
 }
 
+static void test_savestate() {
+    Chip8 c1, c2;
+    chip8_init(&c1);
+    chip8_init(&c2);
+
+    c1.pc = 0x567;
+    c1.I = 0x89A;
+    c1.sp = 3;
+    c1.stack[0] = 0x200; c1.stack[1] = 0x300; c1.stack[2] = 0x400;
+    c1.V[5] = 42;
+    c1.delay_timer = 60;
+    c1.sound_timer = 30;
+    c1.gfx[100] = 1;
+
+    const char *tmp_state = "/tmp/test_byte8.state";
+    TEST_ASSERT(chip8_save_state(&c1, tmp_state), "chip8_save_state writes file successfully");
+
+    TEST_ASSERT(chip8_load_state(&c2, tmp_state), "chip8_load_state reads file successfully");
+    TEST_ASSERT(c2.pc == 0x567, "Savestate restores PC");
+    TEST_ASSERT(c2.I == 0x89A, "Savestate restores I register");
+    TEST_ASSERT(c2.sp == 3 && c2.stack[2] == 0x400, "Savestate restores stack and SP");
+    TEST_ASSERT(c2.V[5] == 42, "Savestate restores V registers");
+    TEST_ASSERT(c2.delay_timer == 60 && c2.sound_timer == 30, "Savestate restores timers");
+    TEST_ASSERT(c2.gfx[100] == 1, "Savestate restores graphics buffer");
+
+    remove(tmp_state);
+}
+
 int main(void) {
     printf("=========================================\n");
     printf("Running Byte8 Emulator Opcode Unit Tests\n");
@@ -241,6 +269,7 @@ int main(void) {
     test_alu_operations();
     test_index_and_memory();
     test_graphics_and_collision();
+    test_savestate();
 
     printf("Results: %d / %d tests passed\n", passed_tests, total_tests);
     if (passed_tests == total_tests) {

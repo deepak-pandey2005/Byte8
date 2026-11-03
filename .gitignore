@@ -12,6 +12,7 @@ disassembler
 
 # Dependency files
 *.d
+*.state
 
 # Debugging / Profiling
 *.dSYM/

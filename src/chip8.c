@@ -63,6 +63,69 @@ void chip8_load_rom(Chip8 *chip8, const char *filename) {
   printf("ROM loaded successfully\n");
 }
 
+#define BYTE8_SAVESTATE_MAGIC 0x38455459 // "BYTE" in little-endian
+#define BYTE8_SAVESTATE_VERSION 1
+
+typedef struct {
+  uint32_t magic;
+  uint32_t version;
+  Chip8 state;
+} SaveStateHeader;
+
+bool chip8_save_state(const Chip8 *chip8, const char *filename) {
+  FILE *f = fopen(filename, "wb");
+  if (!f) {
+    fprintf(stderr, "Error: Could not open savestate file '%s' for writing.\n", filename);
+    return false;
+  }
+
+  SaveStateHeader header;
+  header.magic = BYTE8_SAVESTATE_MAGIC;
+  header.version = BYTE8_SAVESTATE_VERSION;
+  memcpy(&header.state, chip8, sizeof(Chip8));
+
+  size_t written = fwrite(&header, sizeof(SaveStateHeader), 1, f);
+  fclose(f);
+
+  if (written != 1) {
+    fprintf(stderr, "Error: Incomplete write to savestate file '%s'.\n", filename);
+    return false;
+  }
+
+  return true;
+}
+
+bool chip8_load_state(Chip8 *chip8, const char *filename) {
+  FILE *f = fopen(filename, "rb");
+  if (!f) {
+    fprintf(stderr, "Error: Could not open savestate file '%s' for reading.\n", filename);
+    return false;
+  }
+
+  SaveStateHeader header;
+  size_t read = fread(&header, sizeof(SaveStateHeader), 1, f);
+  fclose(f);
+
+  if (read != 1) {
+    fprintf(stderr, "Error: Incomplete read from savestate file '%s'.\n", filename);
+    return false;
+  }
+
+  if (header.magic != BYTE8_SAVESTATE_MAGIC) {
+    fprintf(stderr, "Error: Invalid savestate magic header in '%s'.\n", filename);
+    return false;
+  }
+
+  if (header.version != BYTE8_SAVESTATE_VERSION) {
+    fprintf(stderr, "Error: Unsupported savestate version %u in '%s'.\n", header.version, filename);
+    return false;
+  }
+
+  memcpy(chip8, &header.state, sizeof(Chip8));
+  chip8->draw_flag = true; // Request screen redraw after state restore
+  return true;
+}
+
 void chip8_update_timers(Chip8 *chip8) {
   if (chip8->delay_timer > 0) {
     chip8->delay_timer--;
