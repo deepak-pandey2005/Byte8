@@ -46,6 +46,51 @@ static const ColorTheme COLOR_THEMES[] = {
 #define THEME_COUNT ((int)(sizeof(COLOR_THEMES) / sizeof(COLOR_THEMES[0])))
 
 typedef struct {
+  const char *name;
+  SDL_Keycode keys[16]; // Index 0x0..0xF
+} KeymapConfig;
+
+static const KeymapConfig KEYMAP_PRESETS[] = {
+  {
+    .name = "qwerty",
+    .keys = {
+      SDLK_x, SDLK_1, SDLK_2, SDLK_3,
+      SDLK_q, SDLK_w, SDLK_e, SDLK_a,
+      SDLK_s, SDLK_d, SDLK_z, SDLK_c,
+      SDLK_4, SDLK_r, SDLK_f, SDLK_v
+    }
+  },
+  {
+    .name = "azerty",
+    .keys = {
+      SDLK_x, SDLK_AMPERSAND, SDLK_2, SDLK_QUOTEDBL,
+      SDLK_a, SDLK_z, SDLK_e, SDLK_q,
+      SDLK_s, SDLK_d, SDLK_w, SDLK_c,
+      SDLK_QUOTE, SDLK_r, SDLK_f, SDLK_v
+    }
+  },
+  {
+    .name = "wasd",
+    .keys = {
+      SDLK_SPACE, SDLK_1, SDLK_w, SDLK_3,
+      SDLK_a, SDLK_j, SDLK_d, SDLK_z,
+      SDLK_s, SDLK_c, SDLK_q, SDLK_e,
+      SDLK_4, SDLK_k, SDLK_l, SDLK_u
+    }
+  },
+  {
+    .name = "dvorak",
+    .keys = {
+      SDLK_q, SDLK_1, SDLK_2, SDLK_3,
+      SDLK_QUOTE, SDLK_COMMA, SDLK_PERIOD, SDLK_a,
+      SDLK_o, SDLK_e, SDLK_SEMICOLON, SDLK_j,
+      SDLK_4, SDLK_p, SDLK_u, SDLK_k
+    }
+  }
+};
+#define KEYMAP_PRESET_COUNT ((int)(sizeof(KEYMAP_PRESETS) / sizeof(KEYMAP_PRESETS[0])))
+
+typedef struct {
   const char *rom_path;
   int scale;
   int clock_speed; // in Hz (default: 540)
@@ -56,6 +101,7 @@ typedef struct {
   WaveformType waveform; // square, sine, triangle, sawtooth
   ColorTheme theme;
   bool debug;      // interactive debugger mode
+  KeymapConfig keymap;
   uint16_t initial_breakpoints[MAX_BREAKPOINTS];
   int initial_breakpoint_count;
   char initial_watchpoints[MAX_WATCHPOINTS][32];
@@ -134,35 +180,46 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
   }
 }
 
-// CHIP-8 Hex Keypad Map:
-// 1 2 3 C      -> 1 2 3 4
-// 4 5 6 D      -> Q W E R
-// 7 8 9 E  ==> -> A S D F
-// A 0 B F      -> Z X C V
-static int map_sdl_key_to_chip8(SDL_Keycode key) {
-  switch (key) {
-  case SDLK_1: return 0x1;
-  case SDLK_2: return 0x2;
-  case SDLK_3: return 0x3;
-  case SDLK_4: return 0xC;
-
-  case SDLK_q: return 0x4;
-  case SDLK_w: return 0x5;
-  case SDLK_e: return 0x6;
-  case SDLK_r: return 0xD;
-
-  case SDLK_a: return 0x7;
-  case SDLK_s: return 0x8;
-  case SDLK_d: return 0x9;
-  case SDLK_f: return 0xE;
-
-  case SDLK_z: return 0xA;
-  case SDLK_x: return 0x0;
-  case SDLK_c: return 0xB;
-  case SDLK_v: return 0xF;
-
-  default: return -1;
+static int map_sdl_key_to_chip8(SDL_Keycode key, const KeymapConfig *km) {
+  for (int i = 0; i < 16; i++) {
+    if (km->keys[i] == key) return i;
   }
+  return -1;
+}
+
+static void print_keymap_help(const KeymapConfig *km) {
+  printf("\n=== Active Keypad Mapping [%s] ===\n", km->name);
+  printf("  CHIP-8 Keypad        Keyboard Mapping\n");
+  printf("  [ 1 ][ 2 ][ 3 ][ C ]   ->   [ %s ][ %s ][ %s ][ %s ]\n",
+         SDL_GetKeyName(km->keys[0x1]), SDL_GetKeyName(km->keys[0x2]),
+         SDL_GetKeyName(km->keys[0x3]), SDL_GetKeyName(km->keys[0xC]));
+  printf("  [ 4 ][ 5 ][ 6 ][ D ]   ->   [ %s ][ %s ][ %s ][ %s ]\n",
+         SDL_GetKeyName(km->keys[0x4]), SDL_GetKeyName(km->keys[0x5]),
+         SDL_GetKeyName(km->keys[0x6]), SDL_GetKeyName(km->keys[0xD]));
+  printf("  [ 7 ][ 8 ][ 9 ][ E ]   ->   [ %s ][ %s ][ %s ][ %s ]\n",
+         SDL_GetKeyName(km->keys[0x7]), SDL_GetKeyName(km->keys[0x8]),
+         SDL_GetKeyName(km->keys[0x9]), SDL_GetKeyName(km->keys[0xE]));
+  printf("  [ A ][ 0 ][ B ][ F ]   ->   [ %s ][ %s ][ %s ][ %s ]\n",
+         SDL_GetKeyName(km->keys[0xA]), SDL_GetKeyName(km->keys[0x0]),
+         SDL_GetKeyName(km->keys[0xB]), SDL_GetKeyName(km->keys[0xF]));
+  printf("=======================================\n\n");
+}
+
+static bool parse_keymap(const char *arg, KeymapConfig *out_km) {
+  for (int i = 0; i < KEYMAP_PRESET_COUNT; i++) {
+    if (strcasecmp(arg, KEYMAP_PRESETS[i].name) == 0) {
+      *out_km = KEYMAP_PRESETS[i];
+      return true;
+    }
+  }
+  if (strlen(arg) == 16) {
+    out_km->name = "custom";
+    for (int i = 0; i < 16; i++) {
+      out_km->keys[i] = (SDL_Keycode)tolower((unsigned char)arg[i]);
+    }
+    return true;
+  }
+  return false;
 }
 
 static void print_usage(const char *prog_name) {
@@ -173,6 +230,7 @@ static void print_usage(const char *prog_name) {
   printf("  --clock-speed <hz>     CPU clock speed in Hz (default: 540)\n");
   printf("  --fps <num>            Display/timer refresh rate in Hz (default: 60)\n");
   printf("  --theme <name>         Color theme (classic, matrix, amber, gameboy, cyber)\n");
+  printf("  --keymap <name|16ch>   Keypad layout (qwerty, azerty, wasd, dvorak, or 16-char string)\n");
   printf("  -d, --debug            Launch interactive terminal debugger\n");
   printf("  --break <addr>         Set breakpoint at address (e.g. 0x220)\n");
   printf("  --watch <reg/addr>     Set watchpoint on register (e.g. V3) or memory (e.g. 0x300)\n");
@@ -223,6 +281,7 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
   config->waveform = WAVE_SQUARE;
   config->theme = COLOR_THEMES[0]; // default: classic
   config->debug = false;
+  config->keymap = KEYMAP_PRESETS[0]; // default: qwerty
   config->initial_breakpoint_count = 0;
   config->initial_watchpoint_count = 0;
 
@@ -232,6 +291,12 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
       return 0;
     } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
       config->debug = true;
+    } else if (strcmp(argv[i], "--keymap") == 0 && i + 1 < argc) {
+      const char *km_arg = argv[++i];
+      if (!parse_keymap(km_arg, &config->keymap)) {
+        fprintf(stderr, "Error: Unknown keymap '%s'. Valid options: qwerty, azerty, wasd, dvorak, or 16-character string\n", km_arg);
+        return -1;
+      }
     } else if (strcmp(argv[i], "--break") == 0 && i + 1 < argc) {
       if (config->initial_breakpoint_count < MAX_BREAKPOINTS) {
         config->initial_breakpoints[config->initial_breakpoint_count++] = (uint16_t)strtoul(argv[++i], NULL, 0);
@@ -421,7 +486,8 @@ int main(int argc, char **argv) {
   printf("Audio: %s (Pitch: %d Hz, Volume: %d%%, Wave: %s)\n",
          config.mute ? "Disabled [Muted]" : "Enabled",
          config.pitch, config.mute ? 0 : config.volume, wave_names[config.waveform]);
-  printf("Hotkeys: [P/Space] Pause | [F5] Save State | [F9] Load State | [F10] Step | [Tab] Debug Pause | [F11] Fullscreen | [Esc] Exit\n");
+  printf("Hotkeys: [P/Space] Pause | [F1] Keymap Help | [F5] Save State | [F9] Load State | [F10] Step | [Tab] Debug Pause | [F11] Fullscreen | [Esc] Exit\n");
+  printf("Keymap: %s (Press F1 to display keypad bindings)\n", config.keymap.name);
 
   bool is_paused = config.debug;
   uint16_t last_break_pc = 0xFFFF;
@@ -466,6 +532,8 @@ int main(int argc, char **argv) {
         } else if (event.key.keysym.sym == SDLK_F11) {
           is_fullscreen = !is_fullscreen;
           SDL_SetWindowFullscreen(window, is_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+        } else if (event.key.keysym.sym == SDLK_F1) {
+          print_keymap_help(&config.keymap);
         } else if (event.key.keysym.sym == SDLK_F5) {
           if (chip8_save_state(&chip8, savestate_filename)) {
             printf("[SAVESTATE] Saved state to: %s\n", savestate_filename);
@@ -475,12 +543,12 @@ int main(int argc, char **argv) {
             printf("[SAVESTATE] Loaded state from: %s\n", savestate_filename);
           }
         }
-        int k = map_sdl_key_to_chip8(event.key.keysym.sym);
+        int k = map_sdl_key_to_chip8(event.key.keysym.sym, &config.keymap);
         if (k != -1) {
           chip8.keypad[k] = 1;
         }
       } else if (event.type == SDL_KEYUP) {
-        int k = map_sdl_key_to_chip8(event.key.keysym.sym);
+        int k = map_sdl_key_to_chip8(event.key.keysym.sym, &config.keymap);
         if (k != -1) {
           chip8.keypad[k] = 0;
         }
