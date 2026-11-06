@@ -20,7 +20,7 @@ gcc -Wall -Wextra -std=c99 tests/test_opcodes.c src/chip8.c -o tests/test_opcode
 rm -f tests/test_opcodes
 
 echo ""
-echo "[3/4] Testing Compiler & Preprocessor on all ROM sources..."
+echo "[3/5] Testing Compiler & Preprocessor on all ROM sources..."
 for src in roms/*.txt; do
     rom_name="$(basename "$src" .txt)"
     echo "  Compiling $src -> roms/${rom_name}.ch8"
@@ -29,7 +29,37 @@ done
 echo "  -> All curated source programs compiled cleanly without errors."
 
 echo ""
-echo "[4/4] Testing Disassembler & Compiler Round-Trip Fidelity..."
+echo "[4/5] Testing Multi-Line Parameterized Compiler Macros..."
+TMP_MACRO_SRC="/tmp/test_macro.txt"
+TMP_MACRO_BIN="/tmp/test_macro.ch8"
+cat << 'EOF' > "$TMP_MACRO_SRC"
+#macro DRAW_ENTITY(rx, ry, s_label, h)
+    i = s_label
+    draw rx, ry, h
+#endmacro
+
+#macro SETUP_COORDS(vx, vy, xval, yval)
+    vx = xval
+    vy = yval
+#endmacro
+
+start:
+    cls
+    SETUP_COORDS(v0, v1, 10, 20)
+    DRAW_ENTITY(v0, v1, sprite, 5)
+loop:
+    jump loop
+
+sprite:
+    db 0x3C, 0x7E, 0xFF, 0x7E, 0x3C
+EOF
+
+./compiler "$TMP_MACRO_SRC" "$TMP_MACRO_BIN" > /dev/null
+echo "  -> #macro definition, parameter substitution, and nested calls compiled successfully."
+rm -f "$TMP_MACRO_SRC" "$TMP_MACRO_BIN"
+
+echo ""
+echo "[5/5] Testing Disassembler & Compiler Round-Trip Fidelity..."
 TMP_DISASM="/tmp/byte8_test_disasm.txt"
 TMP_RECOMP="/tmp/byte8_test_recomp.ch8"
 

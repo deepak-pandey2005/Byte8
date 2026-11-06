@@ -69,10 +69,13 @@ static void strip_comments(char *line) {
     char *trimmed = line;
     while (isspace((unsigned char)*trimmed)) trimmed++;
 
-    // Check if line begins with preprocessor directive (#define, #include)
+    // Check if line begins with preprocessor directive (#define, #include, #macro, #endmacro)
     bool is_hash_directive = false;
     if (*trimmed == '#') {
-        if (strncasecmp(trimmed, "#define", 7) == 0 || strncasecmp(trimmed, "#include", 8) == 0) {
+        if (strncasecmp(trimmed, "#define", 7) == 0 ||
+            strncasecmp(trimmed, "#include", 8) == 0 ||
+            strncasecmp(trimmed, "#macro", 6) == 0 ||
+            strncasecmp(trimmed, "#endmacro", 9) == 0) {
             is_hash_directive = true;
         }
     }
@@ -209,8 +212,201 @@ static void expand_defines_in_line(char *line, const DefineTable *dt) {
     line[MAX_LINE_LEN - 1] = '\0';
 }
 
-// Preprocessor: handles #include, %include, #define, const
-static bool preprocess_file(const char *filename, PreprocessedSource *ps, DefineTable *dt, int depth) {
+#define MAX_MACROS 64
+#define MAX_MACRO_PARAMS 8
+#define MAX_MACRO_LINES 64
+#define MAX_MACRO_DEPTH 8
+
+typedef struct {
+    char name[MAX_DEFINE_NAME_LEN];
+    char params[MAX_MACRO_PARAMS][MAX_DEFINE_NAME_LEN];
+    int param_count;
+    char lines[MAX_MACRO_LINES][MAX_LINE_LEN];
+    int line_count;
+} Macro;
+
+typedef struct {
+    Macro items[MAX_MACROS];
+    int count;
+} MacroTable;
+
+static int find_macro(const MacroTable *mt, const char *name) {
+    if (!mt || !name) return -1;
+    for (int i = 0; i < mt->count; i++) {
+        if (strcasecmp(mt->items[i].name, name) == 0) return i;
+    }
+    return -1;
+}
+
+static bool add_macro(MacroTable *mt, const Macro *m, const char *file, int line_num) {
+    if (mt->count >= MAX_MACROS) {
+        fprintf(stderr, "Error in %s:%d: Maximum macro limit reached (%d).\n", file, line_num, MAX_MACROS);
+        return false;
+    }
+    mt->items[mt->count++] = *m;
+    return true;
+}
+
+static void substitute_macro_params(const char *src_line,
+                                   const Macro *m,
+                                   char args[MAX_MACRO_PARAMS][MAX_DEFINE_VAL_LEN],
+                                   int arg_count,
+                                   char *out_line,
+                                   size_t out_size) {
+    char buf[MAX_LINE_LEN * 2];
+    buf[0] = '\0';
+    const char *p = src_line;
+    char *dst = buf;
+    size_t rem = sizeof(buf) - 1;
+
+    while (*p && rem > 0) {
+        if (*p == '$' && isdigit((unsigned char)*(p + 1))) {
+            int p_idx = *(p + 1) - '1';
+            if (p_idx >= 0 && p_idx < arg_count) {
+                size_t alen = strlen(args[p_idx]);
+                if (alen > rem) alen = rem;
+                memcpy(dst, args[p_idx], alen);
+                dst += alen;
+                rem -= alen;
+                p += 2;
+                continue;
+            }
+        }
+        if (isalpha((unsigned char)*p) || *p == '_') {
+            char word[MAX_DEFINE_NAME_LEN];
+            int wlen = 0;
+            while ((isalnum((unsigned char)*p) || *p == '_') && wlen < (int)sizeof(word) - 1) {
+                word[wlen++] = *p++;
+            }
+            word[wlen] = '\0';
+
+            int matched = -1;
+            for (int k = 0; k < m->param_count; k++) {
+                if (strcasecmp(word, m->params[k]) == 0) {
+                    matched = k;
+                    break;
+                }
+            }
+
+            if (matched != -1 && matched < arg_count) {
+                size_t alen = strlen(args[matched]);
+                if (alen > rem) alen = rem;
+                memcpy(dst, args[matched], alen);
+                dst += alen;
+                rem -= alen;
+            } else {
+                if ((size_t)wlen > rem) wlen = (int)rem;
+                memcpy(dst, word, wlen);
+                dst += wlen;
+                rem -= wlen;
+            }
+        } else {
+            *dst++ = *p++;
+            rem--;
+        }
+    }
+    *dst = '\0';
+    strncpy(out_line, buf, out_size - 1);
+    out_line[out_size - 1] = '\0';
+}
+
+static bool try_expand_macro(const char *line,
+                             PreprocessedSource *ps,
+                             const DefineTable *dt,
+                             const MacroTable *mt,
+                             const char *file,
+                             int line_num,
+                             int macro_depth) {
+    if (macro_depth > MAX_MACRO_DEPTH) {
+        fprintf(stderr, "Error in %s:%d: Maximum macro recursion depth exceeded (%d).\n",
+                file, line_num, MAX_MACRO_DEPTH);
+        return false;
+    }
+
+    char candidate[MAX_DEFINE_NAME_LEN];
+    int clen = 0;
+    const char *p = line;
+    while (*p && (isalnum((unsigned char)*p) || *p == '_') && clen < (int)sizeof(candidate) - 1) {
+        candidate[clen++] = *p++;
+    }
+    candidate[clen] = '\0';
+    if (clen == 0) return false;
+
+    int m_idx = find_macro(mt, candidate);
+    if (m_idx == -1) return false;
+
+    const Macro *m = &mt->items[m_idx];
+
+    while (*p == ' ' || *p == '\t') p++;
+    char args[MAX_MACRO_PARAMS][MAX_DEFINE_VAL_LEN];
+    int arg_count = 0;
+
+    char arg_str[MAX_LINE_LEN];
+    arg_str[0] = '\0';
+
+    if (*p == '(') {
+        p++;
+        const char *close_paren = strrchr(p, ')');
+        if (!close_paren) {
+            fprintf(stderr, "Error in %s:%d: Missing closing ')' in macro call '%s'.\n", file, line_num, m->name);
+            return false;
+        }
+        size_t slen = close_paren - p;
+        if (slen >= sizeof(arg_str)) slen = sizeof(arg_str) - 1;
+        strncpy(arg_str, p, slen);
+        arg_str[slen] = '\0';
+    } else if (*p != '\0') {
+        strncpy(arg_str, p, sizeof(arg_str) - 1);
+        arg_str[sizeof(arg_str) - 1] = '\0';
+    }
+
+    if (arg_str[0] != '\0') {
+        char *tok = strtok(arg_str, ",");
+        while (tok && arg_count < MAX_MACRO_PARAMS) {
+            char *trimmed = trim_whitespace(tok);
+            strncpy(args[arg_count], trimmed, MAX_DEFINE_VAL_LEN - 1);
+            args[arg_count][MAX_DEFINE_VAL_LEN - 1] = '\0';
+            arg_count++;
+            tok = strtok(NULL, ",");
+        }
+    }
+
+    if (arg_count != m->param_count) {
+        fprintf(stderr, "Error in %s:%d: Macro '%s' expects %d arguments, but got %d.\n",
+                file, line_num, m->name, m->param_count, arg_count);
+        return false;
+    }
+
+    for (int l = 0; l < m->line_count; l++) {
+        char expanded[MAX_LINE_LEN];
+        substitute_macro_params(m->lines[l], m, args, arg_count, expanded, sizeof(expanded));
+
+        char *trimmed = trim_whitespace(expanded);
+        if (*trimmed == '\0') continue;
+
+        if (!try_expand_macro(trimmed, ps, dt, mt, file, line_num, macro_depth + 1)) {
+            char final_line[MAX_LINE_LEN];
+            strncpy(final_line, trimmed, sizeof(final_line) - 1);
+            final_line[sizeof(final_line) - 1] = '\0';
+            expand_defines_in_line(final_line, dt);
+
+            if (ps->count >= MAX_SOURCE_LINES) {
+                fprintf(stderr, "Error: Maximum source line limit (%d) reached.\n", MAX_SOURCE_LINES);
+                return false;
+            }
+            strncpy(ps->lines[ps->count].text, final_line, MAX_LINE_LEN - 1);
+            ps->lines[ps->count].text[MAX_LINE_LEN - 1] = '\0';
+            strncpy(ps->lines[ps->count].filename, file, sizeof(ps->lines[0].filename) - 1);
+            ps->lines[ps->count].line_number = line_num;
+            ps->count++;
+        }
+    }
+
+    return true;
+}
+
+// Preprocessor: handles #include, %include, #define, const, #macro
+static bool preprocess_file(const char *filename, PreprocessedSource *ps, DefineTable *dt, MacroTable *mt, int depth) {
     if (depth > MAX_INCLUDE_DEPTH) {
         fprintf(stderr, "Error: Exceeded maximum include recursion depth (%d) in '%s'.\n", MAX_INCLUDE_DEPTH, filename);
         return false;
@@ -267,7 +463,73 @@ static bool preprocess_file(const char *filename, PreprocessedSource *ps, Define
                 snprintf(full_path, sizeof(full_path), "%s%s", base_dir, inc_name);
             }
 
-            if (!preprocess_file(full_path, ps, dt, depth + 1)) {
+            if (!preprocess_file(full_path, ps, dt, mt, depth + 1)) {
+                fclose(f);
+                return false;
+            }
+            continue;
+        }
+
+        // Check for #macro NAME(args...) ... #endmacro
+        if (strncasecmp(line, "#macro", 6) == 0 || strncasecmp(line, "%macro", 6) == 0) {
+            Macro m;
+            memset(&m, 0, sizeof(m));
+            char *hdr = trim_whitespace(line + 6);
+            char *paren = strchr(hdr, '(');
+            if (paren) {
+                size_t nlen = paren - hdr;
+                if (nlen >= sizeof(m.name)) nlen = sizeof(m.name) - 1;
+                strncpy(m.name, hdr, nlen);
+                m.name[nlen] = '\0';
+                char *clean_mname = trim_whitespace(m.name);
+                memmove(m.name, clean_mname, strlen(clean_mname) + 1);
+
+                char *close_paren = strchr(paren + 1, ')');
+                if (close_paren) {
+                    char param_buf[MAX_LINE_LEN];
+                    size_t plen = close_paren - (paren + 1);
+                    if (plen >= sizeof(param_buf)) plen = sizeof(param_buf) - 1;
+                    strncpy(param_buf, paren + 1, plen);
+                    param_buf[plen] = '\0';
+
+                    char *tok = strtok(param_buf, ",");
+                    while (tok && m.param_count < MAX_MACRO_PARAMS) {
+                        char *ptrim = trim_whitespace(tok);
+                        strncpy(m.params[m.param_count], ptrim, MAX_DEFINE_NAME_LEN - 1);
+                        m.params[m.param_count][MAX_DEFINE_NAME_LEN - 1] = '\0';
+                        m.param_count++;
+                        tok = strtok(NULL, ",");
+                    }
+                }
+            } else {
+                sscanf(hdr, "%63s", m.name);
+            }
+
+            bool closed = false;
+            while (fgets(raw_buf, sizeof(raw_buf), f)) {
+                line_num++;
+                strip_comments(raw_buf);
+                char *mline = trim_whitespace(raw_buf);
+                if (*mline == '\0') continue;
+                if (strcasecmp(mline, "#endmacro") == 0 || strcasecmp(mline, "%endmacro") == 0) {
+                    closed = true;
+                    break;
+                }
+                if (m.line_count < MAX_MACRO_LINES) {
+                    strncpy(m.lines[m.line_count], mline, MAX_LINE_LEN - 1);
+                    m.lines[m.line_count][MAX_LINE_LEN - 1] = '\0';
+                    m.line_count++;
+                }
+            }
+
+            if (!closed) {
+                fprintf(stderr, "Error in %s:%d: Unterminated #macro '%s' (missing #endmacro).\n",
+                        filename, line_num, m.name);
+                fclose(f);
+                return false;
+            }
+
+            if (!add_macro(mt, &m, filename, line_num)) {
                 fclose(f);
                 return false;
             }
@@ -319,6 +581,11 @@ static bool preprocess_file(const char *filename, PreprocessedSource *ps, Define
                 fclose(f);
                 return false;
             }
+            continue;
+        }
+
+        // Check if line invokes a macro
+        if (try_expand_macro(line, ps, dt, mt, filename, line_num, 0)) {
             continue;
         }
 
@@ -911,16 +1178,17 @@ int main(int argc, char **argv) {
     printf("=======================================\n");
 
     // ==========================================
-    // PREPROCESS STAGE: #include, #define, const
+    // PREPROCESS STAGE: #include, #define, const, #macro
     // ==========================================
     printf("[Preprocess] Resolving includes and macros...\n");
     PreprocessedSource ps = { .count = 0 };
     DefineTable dt = { .count = 0 };
+    MacroTable mt = { .count = 0 };
 
-    if (!preprocess_file(argv[1], &ps, &dt, 0)) {
+    if (!preprocess_file(argv[1], &ps, &dt, &mt, 0)) {
         return 1;
     }
-    printf("[Preprocess] Done. Total lines: %d, active defines: %d\n", ps.count, dt.count);
+    printf("[Preprocess] Done. Total lines: %d, active defines: %d, active macros: %d\n", ps.count, dt.count, mt.count);
 
     // ==========================================
     // PASS 1: Symbol resolution & address sizing
