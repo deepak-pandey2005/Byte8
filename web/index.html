@@ -118,7 +118,18 @@
         <option value="amber">Amber CRT</option>
         <option value="gameboy">Game Boy</option>
         <option value="classic">Classic B&W</option>
+        <option value="custom">Custom Hex</option>
       </select>
+
+      <div style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+        <label for="fgColorPicker" style="padding: 0; border: none; background: none;">FG:</label>
+        <input type="color" id="fgColorPicker" value="#00ffcc" style="width: 28px; height: 26px; border: none; cursor: pointer; background: transparent;">
+        <label for="bgColorPicker" style="padding: 0; border: none; background: none;">BG:</label>
+        <input type="color" id="bgColorPicker" value="#100c24" style="width: 28px; height: 26px; border: none; cursor: pointer; background: transparent;">
+        <label style="padding: 0; border: none; background: none; display: flex; align-items: center; gap: 4px;">
+          <input type="checkbox" id="scanlineCheck" style="cursor: pointer;"> CRT
+        </label>
+      </div>
 
       <button id="loadBtn" class="primary">Load Selected</button>
       <button id="resetBtn">Restart</button>
@@ -162,6 +173,10 @@
     const muteCheck = document.getElementById('muteCheck');
     const fileInput = document.getElementById('fileInput');
 
+    const fgColorPicker = document.getElementById('fgColorPicker');
+    const bgColorPicker = document.getElementById('bgColorPicker');
+    const scanlineCheck = document.getElementById('scanlineCheck');
+
     const THEMES = {
       cyber:   { bg: '#100c24', fg: '#00ffcc', border: '#00ffcc' },
       matrix:  { bg: '#051205', fg: '#00ff46', border: '#00ff46' },
@@ -171,10 +186,41 @@
     };
     let currentTheme = THEMES.cyber;
 
-    themeSelect.addEventListener('change', () => {
-      currentTheme = THEMES[themeSelect.value] || THEMES.cyber;
+    function applyCustomTheme() {
+      currentTheme = {
+        bg: bgColorPicker.value,
+        fg: fgColorPicker.value,
+        border: fgColorPicker.value
+      };
       canvas.style.borderColor = currentTheme.border;
       canvas.style.boxShadow = `0 0 16px ${currentTheme.border}44`;
+      if (wasmExports) renderScreen();
+    }
+
+    themeSelect.addEventListener('change', () => {
+      if (themeSelect.value === 'custom') {
+        applyCustomTheme();
+        return;
+      }
+      currentTheme = THEMES[themeSelect.value] || THEMES.cyber;
+      fgColorPicker.value = currentTheme.fg;
+      bgColorPicker.value = currentTheme.bg;
+      canvas.style.borderColor = currentTheme.border;
+      canvas.style.boxShadow = `0 0 16px ${currentTheme.border}44`;
+      if (wasmExports) renderScreen();
+    });
+
+    fgColorPicker.addEventListener('input', () => {
+      themeSelect.value = 'custom';
+      applyCustomTheme();
+    });
+
+    bgColorPicker.addEventListener('input', () => {
+      themeSelect.value = 'custom';
+      applyCustomTheme();
+    });
+
+    scanlineCheck.addEventListener('change', () => {
       if (wasmExports) renderScreen();
     });
 
@@ -258,6 +304,13 @@
           if (gfx[y * VIDEO_WIDTH + x]) {
             ctx.fillRect(x * SCALE, y * SCALE, SCALE, SCALE);
           }
+        }
+      }
+
+      if (scanlineCheck.checked) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+        for (let y = 0; y < canvas.height; y += 4) {
+          ctx.fillRect(0, y, canvas.width, 2);
         }
       }
     }

@@ -101,6 +101,7 @@ typedef struct {
   WaveformType waveform; // square, sine, triangle, sawtooth
   ColorTheme theme;
   bool debug;      // interactive debugger mode
+  bool scanlines;  // CRT scanlines post-processing
   KeymapConfig keymap;
   uint16_t initial_breakpoints[MAX_BREAKPOINTS];
   int initial_breakpoint_count;
@@ -222,6 +223,22 @@ static bool parse_keymap(const char *arg, KeymapConfig *out_km) {
   return false;
 }
 
+static bool parse_hex_color(const char *str, uint8_t *r, uint8_t *g, uint8_t *b) {
+  if (!str) return false;
+  if (*str == '#') str++;
+  if (strlen(str) != 6) return false;
+
+  unsigned int rgb = 0;
+  char *endptr = NULL;
+  rgb = (unsigned int)strtoul(str, &endptr, 16);
+  if (!endptr || *endptr != '\0') return false;
+
+  *r = (rgb >> 16) & 0xFF;
+  *g = (rgb >> 8) & 0xFF;
+  *b = rgb & 0xFF;
+  return true;
+}
+
 static void print_usage(const char *prog_name) {
   printf("Byte8 CHIP-8 Emulator\n");
   printf("Usage: %s <ROM file> [options]\n\n", prog_name);
@@ -230,6 +247,9 @@ static void print_usage(const char *prog_name) {
   printf("  --clock-speed <hz>     CPU clock speed in Hz (default: 540)\n");
   printf("  --fps <num>            Display/timer refresh rate in Hz (default: 60)\n");
   printf("  --theme <name>         Color theme (classic, matrix, amber, gameboy, cyber)\n");
+  printf("  --fg, --foreground <#hex> Custom foreground color (e.g. #50FA7B or 00FFCC)\n");
+  printf("  --bg, --background <#hex> Custom background color (e.g. #282A36 or 111418)\n");
+  printf("  --crt, --scanlines     Enable retro CRT scanline post-processing\n");
   printf("  --keymap <name|16ch>   Keypad layout (qwerty, azerty, wasd, dvorak, or 16-char string)\n");
   printf("  -d, --debug            Launch interactive terminal debugger\n");
   printf("  --break <addr>         Set breakpoint at address (e.g. 0x220)\n");
@@ -281,6 +301,7 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
   config->waveform = WAVE_SQUARE;
   config->theme = COLOR_THEMES[0]; // default: classic
   config->debug = false;
+  config->scanlines = false;
   config->keymap = KEYMAP_PRESETS[0]; // default: qwerty
   config->initial_breakpoint_count = 0;
   config->initial_watchpoint_count = 0;
@@ -291,6 +312,22 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
       return 0;
     } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
       config->debug = true;
+    } else if (strcmp(argv[i], "--crt") == 0 || strcmp(argv[i], "--scanlines") == 0) {
+      config->scanlines = true;
+    } else if ((strcmp(argv[i], "--fg") == 0 || strcmp(argv[i], "--foreground") == 0) && i + 1 < argc) {
+      const char *hex_arg = argv[++i];
+      if (!parse_hex_color(hex_arg, &config->theme.fg_r, &config->theme.fg_g, &config->theme.fg_b)) {
+        fprintf(stderr, "Error: Invalid foreground hex color '%s' (format: #RRGGBB or RRGGBB)\n", hex_arg);
+        return -1;
+      }
+      config->theme.name = "custom";
+    } else if ((strcmp(argv[i], "--bg") == 0 || strcmp(argv[i], "--background") == 0) && i + 1 < argc) {
+      const char *hex_arg = argv[++i];
+      if (!parse_hex_color(hex_arg, &config->theme.bg_r, &config->theme.bg_g, &config->theme.bg_b)) {
+        fprintf(stderr, "Error: Invalid background hex color '%s' (format: #RRGGBB or RRGGBB)\n", hex_arg);
+        return -1;
+      }
+      config->theme.name = "custom";
     } else if (strcmp(argv[i], "--keymap") == 0 && i + 1 < argc) {
       const char *km_arg = argv[++i];
       if (!parse_keymap(km_arg, &config->keymap)) {
@@ -695,8 +732,20 @@ int main(int argc, char **argv) {
     if (chip8.draw_flag) {
       int w = chip8.video_width;
       int h = chip8.video_height;
-      for (int i = 0; i < w * h; i++) {
-        pixel_buffer[i] = chip8.gfx[i] ? fg_color_argb : bg_color_argb;
+      for (int y = 0; y < h; y++) {
+        bool is_scanline = config.scanlines && (y % 2 == 1);
+        for (int x = 0; x < w; x++) {
+          int i = x + (y * w);
+          uint32_t col = chip8.gfx[i] ? fg_color_argb : bg_color_argb;
+          if (is_scanline) {
+            uint8_t a = (col >> 24) & 0xFF;
+            uint8_t r = (uint8_t)(((col >> 16) & 0xFF) * 0.72);
+            uint8_t g = (uint8_t)(((col >> 8) & 0xFF) * 0.72);
+            uint8_t b = (uint8_t)((col & 0xFF) * 0.72);
+            col = (a << 24) | (r << 16) | (g << 8) | b;
+          }
+          pixel_buffer[i] = col;
+        }
       }
 
       SDL_Rect src_rect = { 0, 0, w, h };
