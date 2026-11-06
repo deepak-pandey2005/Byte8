@@ -7,6 +7,11 @@
 #include <string.h>
 #include <math.h>
 
+#ifndef _WIN32
+#include <poll.h>
+#include <unistd.h>
+#endif
+
 #define AUDIO_SAMPLE_RATE 44100
 #define PI 3.14159265358979323846
 
@@ -50,6 +55,7 @@ typedef struct {
   int pitch;       // in Hz (default: 440)
   WaveformType waveform; // square, sine, triangle, sawtooth
   ColorTheme theme;
+  bool debug;      // interactive debugger mode
 } EmulatorConfig;
 
 // Audio Callback synthesizing the selected waveform with volume scaling
@@ -139,6 +145,7 @@ static void print_usage(const char *prog_name) {
   printf("  --clock-speed <hz>     CPU clock speed in Hz (default: 540)\n");
   printf("  --fps <num>            Display/timer refresh rate in Hz (default: 60)\n");
   printf("  --theme <name>         Color theme (classic, matrix, amber, gameboy, cyber)\n");
+  printf("  -d, --debug            Launch interactive terminal debugger\n");
   printf("\nAudio Options:\n");
   printf("  --volume <0-100>       Audio buzzer volume (default: 50)\n");
   printf("  --pitch <hz>           Buzzer pitch frequency in Hz (default: 440)\n");
@@ -185,11 +192,14 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
   config->pitch = 440;
   config->waveform = WAVE_SQUARE;
   config->theme = COLOR_THEMES[0]; // default: classic
+  config->debug = false;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       print_usage(argv[0]);
       return 0;
+    } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
+      config->debug = true;
     } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
       config->scale = atoi(argv[++i]);
       if (config->scale < 1 || config->scale > 50) {
@@ -360,9 +370,15 @@ int main(int argc, char **argv) {
   printf("Audio: %s (Pitch: %d Hz, Volume: %d%%, Wave: %s)\n",
          config.mute ? "Disabled [Muted]" : "Enabled",
          config.pitch, config.mute ? 0 : config.volume, wave_names[config.waveform]);
-  printf("Hotkeys: [P/Space] Pause | [F5] Save State | [F9] Load State | [F11] Fullscreen | [Esc] Exit\n");
+  printf("Hotkeys: [P/Space] Pause | [F5] Save State | [F9] Load State | [F10] Step | [Tab] Debug Pause | [F11] Fullscreen | [Esc] Exit\n");
 
-  bool is_paused = false;
+  bool is_paused = config.debug;
+  if (config.debug) {
+    char updated_title[200];
+    snprintf(updated_title, sizeof(updated_title), "%s [DEBUG - PAUSED]", window_title);
+    SDL_SetWindowTitle(window, updated_title);
+    chip8_dump_debug(&chip8);
+  }
 
   while (running) {
     SDL_Event event;
@@ -376,6 +392,24 @@ int main(int argc, char **argv) {
           is_paused = !is_paused;
           char updated_title[200];
           snprintf(updated_title, sizeof(updated_title), "%s%s", window_title, is_paused ? " [PAUSED]" : "");
+          SDL_SetWindowTitle(window, updated_title);
+          if (is_paused && config.debug) {
+            chip8_dump_debug(&chip8);
+          }
+        } else if (event.key.keysym.sym == SDLK_TAB) {
+          is_paused = !is_paused;
+          char updated_title[200];
+          snprintf(updated_title, sizeof(updated_title), "%s%s", window_title, is_paused ? " [DEBUG - PAUSED]" : "");
+          SDL_SetWindowTitle(window, updated_title);
+          if (is_paused) {
+            chip8_dump_debug(&chip8);
+          }
+        } else if (event.key.keysym.sym == SDLK_F10) {
+          is_paused = true;
+          chip8_cycle(&chip8);
+          chip8_dump_debug(&chip8);
+          char updated_title[200];
+          snprintf(updated_title, sizeof(updated_title), "%s [DEBUG - STEPPED]", window_title);
           SDL_SetWindowTitle(window, updated_title);
         } else if (event.key.keysym.sym == SDLK_F11) {
           is_fullscreen = !is_fullscreen;
@@ -400,6 +434,63 @@ int main(int argc, char **argv) {
         }
       }
     }
+
+#ifndef _WIN32
+    if (config.debug || is_paused) {
+      if (feof(stdin)) {
+        if (config.debug) running = false;
+      } else {
+        struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN | POLLHUP, .revents = 0 };
+        if (poll(&pfd, 1, 0) > 0) {
+          if (pfd.revents & POLLIN) {
+            char line_buf[256];
+            if (fgets(line_buf, sizeof(line_buf), stdin)) {
+              char *p = line_buf + strlen(line_buf) - 1;
+              while (p >= line_buf && (*p == '\n' || *p == '\r' || *p == ' ' || *p == '\t')) {
+                *p = '\0';
+                p--;
+              }
+              if (line_buf[0] == '\0' || strcmp(line_buf, "s") == 0 || strcmp(line_buf, "step") == 0) {
+                chip8_cycle(&chip8);
+                chip8_dump_debug(&chip8);
+              } else if (strcmp(line_buf, "c") == 0 || strcmp(line_buf, "cont") == 0) {
+                is_paused = false;
+                printf("[DEBUG] Resumed execution.\n");
+              } else if (strcmp(line_buf, "r") == 0 || strcmp(line_buf, "regs") == 0) {
+                chip8_dump_debug(&chip8);
+              } else if (strncmp(line_buf, "m", 1) == 0 && (line_buf[1] == ' ' || line_buf[1] == '\0')) {
+                uint32_t mem_addr = 0x200;
+                uint32_t mem_len = 32;
+                char *token = strtok(line_buf + 1, " \t");
+                if (token) {
+                  mem_addr = (uint32_t)strtoul(token, NULL, 0);
+                  token = strtok(NULL, " \t");
+                  if (token) mem_len = (uint32_t)strtoul(token, NULL, 0);
+                }
+                chip8_dump_memory(&chip8, (uint16_t)mem_addr, (size_t)mem_len);
+              } else if (strcmp(line_buf, "q") == 0 || strcmp(line_buf, "quit") == 0) {
+                running = false;
+              } else if (strcmp(line_buf, "h") == 0 || strcmp(line_buf, "help") == 0) {
+                printf("\n--- Debugger Commands ---\n");
+                printf("  s, step, [Enter]   Single-step 1 instruction\n");
+                printf("  c, cont            Continue execution\n");
+                printf("  r, regs            Print register & stack status\n");
+                printf("  m <addr> [count]   Hex dump of memory at <addr>\n");
+                printf("  q, quit            Exit emulator\n");
+                printf("-------------------------\n");
+              } else {
+                printf("Unknown command '%s'. Type 'h' for help.\n", line_buf);
+              }
+            } else {
+              if (config.debug) running = false;
+            }
+          } else if (pfd.revents & POLLHUP) {
+            if (config.debug) running = false;
+          }
+        }
+      }
+    }
+#endif
 
     if (!is_paused) {
       // Run CPU cycles for this frame slice

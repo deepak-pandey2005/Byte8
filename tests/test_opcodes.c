@@ -282,6 +282,28 @@ static void test_legacy_sys() {
     TEST_ASSERT(c.pc == 0x202, "0NNN legacy sys call handled without error as no-op");
 }
 
+static void test_disasm_and_debug() {
+    char buf[64];
+    chip8_disasm_opcode(0x00E0, buf, sizeof(buf));
+    TEST_ASSERT(strcmp(buf, "cls") == 0, "Disasm 00E0 -> cls");
+
+    chip8_disasm_opcode(0x1234, buf, sizeof(buf));
+    TEST_ASSERT(strcmp(buf, "jump 0x234") == 0, "Disasm 1234 -> jump 0x234");
+
+    chip8_disasm_opcode(0x6A42, buf, sizeof(buf));
+    TEST_ASSERT(strcmp(buf, "vA = 0x42") == 0, "Disasm 6A42 -> vA = 0x42");
+
+    chip8_disasm_opcode(0xD125, buf, sizeof(buf));
+    TEST_ASSERT(strcmp(buf, "draw v1, v2, 5") == 0, "Disasm D125 -> draw v1, v2, 5");
+
+    Chip8 c;
+    chip8_init(&c);
+    // ensure dump_debug and dump_memory execute without crashing
+    chip8_dump_debug(&c);
+    chip8_dump_memory(&c, 0x200, 32);
+    TEST_ASSERT(true, "chip8_dump_debug & dump_memory run safely");
+}
+
 int main(void) {
     printf("=========================================\n");
     printf("Running Byte8 Emulator Opcode Unit Tests\n");
@@ -295,6 +317,7 @@ int main(void) {
     test_graphics_and_collision();
     test_savestate();
     test_legacy_sys();
+    test_disasm_and_debug();
 
     printf("Results: %d / %d tests passed\n", passed_tests, total_tests);
     if (passed_tests == total_tests) {

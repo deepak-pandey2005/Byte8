@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #define VIDEO_WIDTH 64
 #define VIDEO_HEIGHT 32
@@ -30,5 +31,8 @@ void chip8_cycle(Chip8 *chip8);
 void chip8_update_timers(Chip8 *chip8);
 bool chip8_save_state(const Chip8 *chip8, const char *filename);
 bool chip8_load_state(Chip8 *chip8, const char *filename);
+void chip8_disasm_opcode(uint16_t opcode, char *out_buf, size_t buf_size);
+void chip8_dump_debug(const Chip8 *chip8);
+void chip8_dump_memory(const Chip8 *chip8, uint16_t addr, size_t count);
 
 #endif

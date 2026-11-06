@@ -445,3 +445,150 @@ void chip8_cycle(Chip8 *chip8) {
     break;
   }
 }
+
+void chip8_disasm_opcode(uint16_t op, char *out_buf, size_t buf_size) {
+  if (!out_buf || buf_size == 0) return;
+
+  uint8_t n1 = (op & 0xF000) >> 12;
+  uint8_t x  = (op & 0x0F00) >> 8;
+  uint8_t y  = (op & 0x00F0) >> 4;
+  uint8_t n  =  op & 0x000F;
+  uint8_t kk =  op & 0x00FF;
+  uint16_t nnn = op & 0x0FFF;
+
+  switch (n1) {
+  case 0x0:
+    if (op == 0x00E0) snprintf(out_buf, buf_size, "cls");
+    else if (op == 0x00EE) snprintf(out_buf, buf_size, "ret");
+    else snprintf(out_buf, buf_size, "sys 0x%03X", nnn);
+    break;
+  case 0x1: snprintf(out_buf, buf_size, "jump 0x%03X", nnn); break;
+  case 0x2: snprintf(out_buf, buf_size, "call 0x%03X", nnn); break;
+  case 0x3: snprintf(out_buf, buf_size, "if v%X == 0x%02X", x, kk); break;
+  case 0x4: snprintf(out_buf, buf_size, "if v%X != 0x%02X", x, kk); break;
+  case 0x5:
+    if (n == 0) snprintf(out_buf, buf_size, "if v%X == v%X", x, y);
+    else snprintf(out_buf, buf_size, "db 0x%02X, 0x%02X", (op >> 8) & 0xFF, op & 0xFF);
+    break;
+  case 0x6: snprintf(out_buf, buf_size, "v%X = 0x%02X", x, kk); break;
+  case 0x7: snprintf(out_buf, buf_size, "v%X += 0x%02X", x, kk); break;
+  case 0x8:
+    switch (n) {
+    case 0x0: snprintf(out_buf, buf_size, "v%X = v%X", x, y); break;
+    case 0x1: snprintf(out_buf, buf_size, "v%X |= v%X", x, y); break;
+    case 0x2: snprintf(out_buf, buf_size, "v%X &= v%X", x, y); break;
+    case 0x3: snprintf(out_buf, buf_size, "v%X ^= v%X", x, y); break;
+    case 0x4: snprintf(out_buf, buf_size, "v%X += v%X", x, y); break;
+    case 0x5: snprintf(out_buf, buf_size, "v%X -= v%X", x, y); break;
+    case 0x6: snprintf(out_buf, buf_size, "v%X >>= 1", x); break;
+    case 0x7: snprintf(out_buf, buf_size, "v%X = v%X - v%X", x, y, x); break;
+    case 0xE: snprintf(out_buf, buf_size, "v%X <<= 1", x); break;
+    default:  snprintf(out_buf, buf_size, "db 0x%02X, 0x%02X", (op >> 8) & 0xFF, op & 0xFF); break;
+    }
+    break;
+  case 0x9:
+    if (n == 0) snprintf(out_buf, buf_size, "if v%X != v%X", x, y);
+    else snprintf(out_buf, buf_size, "db 0x%02X, 0x%02X", (op >> 8) & 0xFF, op & 0xFF);
+    break;
+  case 0xA: snprintf(out_buf, buf_size, "i = 0x%03X", nnn); break;
+  case 0xB: snprintf(out_buf, buf_size, "jump v0 + 0x%03X", nnn); break;
+  case 0xC: snprintf(out_buf, buf_size, "v%X = rand 0x%02X", x, kk); break;
+  case 0xD: snprintf(out_buf, buf_size, "draw v%X, v%X, %d", x, y, n); break;
+  case 0xE:
+    if (kk == 0x9E) snprintf(out_buf, buf_size, "skip_key v%X", x);
+    else if (kk == 0xA1) snprintf(out_buf, buf_size, "skip_nkey v%X", x);
+    else snprintf(out_buf, buf_size, "db 0x%02X, 0x%02X", (op >> 8) & 0xFF, op & 0xFF);
+    break;
+  case 0xF:
+    switch (kk) {
+    case 0x07: snprintf(out_buf, buf_size, "v%X = delay", x); break;
+    case 0x0A: snprintf(out_buf, buf_size, "v%X = key", x); break;
+    case 0x15: snprintf(out_buf, buf_size, "delay = v%X", x); break;
+    case 0x18: snprintf(out_buf, buf_size, "sound = v%X", x); break;
+    case 0x1E: snprintf(out_buf, buf_size, "i += v%X", x); break;
+    case 0x29: snprintf(out_buf, buf_size, "i = font v%X", x); break;
+    case 0x33: snprintf(out_buf, buf_size, "bcd v%X", x); break;
+    case 0x55: snprintf(out_buf, buf_size, "save v%X", x); break;
+    case 0x65: snprintf(out_buf, buf_size, "load v%X", x); break;
+    default:   snprintf(out_buf, buf_size, "db 0x%02X, 0x%02X", (op >> 8) & 0xFF, op & 0xFF); break;
+    }
+    break;
+  default:
+    snprintf(out_buf, buf_size, "db 0x%02X, 0x%02X", (op >> 8) & 0xFF, op & 0xFF);
+    break;
+  }
+}
+
+void chip8_dump_debug(const Chip8 *chip8) {
+  if (!chip8) return;
+
+  uint16_t current_op = 0;
+  if (chip8->pc < 4095) {
+    current_op = (chip8->memory[chip8->pc] << 8) | chip8->memory[chip8->pc + 1];
+  }
+  char disasm[64];
+  chip8_disasm_opcode(current_op, disasm, sizeof(disasm));
+
+  printf("\n=== [ BYTE8 DEBUGGER ] ====================================\n");
+  printf("  PC: 0x%04X | Opcode: 0x%04X (%s)\n", chip8->pc, current_op, disasm);
+  printf("  I:  0x%04X | SP: %d | DT: %02d | ST: %02d\n", chip8->I, chip8->sp, chip8->delay_timer, chip8->sound_timer);
+  printf("  V0: %02X  V1: %02X  V2: %02X  V3: %02X  V4: %02X  V5: %02X  V6: %02X  V7: %02X\n",
+         chip8->V[0], chip8->V[1], chip8->V[2], chip8->V[3],
+         chip8->V[4], chip8->V[5], chip8->V[6], chip8->V[7]);
+  printf("  V8: %02X  V9: %02X  VA: %02X  VB: %02X  VC: %02X  VD: %02X  VE: %02X  VF: %02X\n",
+         chip8->V[8], chip8->V[9], chip8->V[10], chip8->V[11],
+         chip8->V[12], chip8->V[13], chip8->V[14], chip8->V[15]);
+
+  if (chip8->sp > 0) {
+    printf("  Stack [top=%d]: ", chip8->sp);
+    for (int s = 0; s < chip8->sp && s < STACK_SIZE; s++) {
+      printf("0x%03X ", chip8->stack[s]);
+    }
+    printf("\n");
+  }
+
+  printf("  Upcoming Instructions:\n");
+  for (int offset = 2; offset <= 6; offset += 2) {
+    uint16_t next_pc = chip8->pc + offset;
+    if (next_pc < 4095) {
+      uint16_t next_op = (chip8->memory[next_pc] << 8) | chip8->memory[next_pc + 1];
+      char next_disasm[64];
+      chip8_disasm_opcode(next_op, next_disasm, sizeof(next_disasm));
+      printf("    0x%04X: 0x%04X  %s\n", next_pc, next_op, next_disasm);
+    }
+  }
+  printf("===========================================================\n");
+  printf("Commands: [s/Enter] Step | [c] Continue | [r] Regs | [m <addr> [n]] Mem | [q] Quit\n");
+}
+
+void chip8_dump_memory(const Chip8 *chip8, uint16_t addr, size_t count) {
+  if (!chip8) return;
+  if (addr >= 4096) {
+    printf("Error: Address 0x%04X out of range (0x0000 - 0x0FFF)\n", addr);
+    return;
+  }
+  if (count == 0) count = 16;
+  if (addr + count > 4096) count = 4096 - addr;
+
+  printf("\n--- Memory Dump from 0x%04X (%zu bytes) ---\n", addr, count);
+  for (size_t i = 0; i < count; i += 16) {
+    uint16_t row_addr = addr + i;
+    printf("  0x%04X: ", row_addr);
+    size_t row_len = (count - i < 16) ? (count - i) : 16;
+    for (size_t j = 0; j < 16; j++) {
+      if (j < row_len) {
+        printf("%02X ", chip8->memory[row_addr + j]);
+      } else {
+        printf("   ");
+      }
+      if (j == 7) printf(" ");
+    }
+    printf(" |");
+    for (size_t j = 0; j < row_len; j++) {
+      uint8_t c = chip8->memory[row_addr + j];
+      printf("%c", (c >= 32 && c <= 126) ? c : '.');
+    }
+    printf("|\n");
+  }
+  printf("-------------------------------------------\n");
+}
