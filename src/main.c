@@ -188,6 +188,22 @@ static int map_sdl_key_to_chip8(SDL_Keycode key, const KeymapConfig *km) {
   return -1;
 }
 
+static int map_controller_button_to_chip8(Uint8 button) {
+  switch (button) {
+    case SDL_CONTROLLER_BUTTON_DPAD_UP:        return 0x2;
+    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:      return 0x8;
+    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:      return 0x4;
+    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:     return 0x6;
+    case SDL_CONTROLLER_BUTTON_A:              return 0x5;
+    case SDL_CONTROLLER_BUTTON_B:              return 0x6;
+    case SDL_CONTROLLER_BUTTON_X:              return 0x7;
+    case SDL_CONTROLLER_BUTTON_Y:              return 0xE;
+    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:   return 0x1;
+    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:  return 0x3;
+    default: return -1;
+  }
+}
+
 static void print_keymap_help(const KeymapConfig *km) {
   printf("\n=== Active Keypad Mapping [%s] ===\n", km->name);
   printf("  CHIP-8 Keypad        Keyboard Mapping\n");
@@ -432,9 +448,20 @@ int main(int argc, char **argv) {
     apply_watchpoint_str(&chip8, config.initial_watchpoints[i]);
   }
 
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) < 0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) < 0) {
     fprintf(stderr, "SDL Init failed: %s\n", SDL_GetError());
     return 1;
+  }
+
+  SDL_GameController *controller = NULL;
+  for (int i = 0; i < SDL_NumJoysticks(); i++) {
+    if (SDL_IsGameController(i)) {
+      controller = SDL_GameControllerOpen(i);
+      if (controller) {
+        printf("[GAMEPAD] Connected: %s\n", SDL_GameControllerName(controller));
+        break;
+      }
+    }
   }
 
   // Audio setup
@@ -524,6 +551,7 @@ int main(int argc, char **argv) {
          config.mute ? "Disabled [Muted]" : "Enabled",
          config.pitch, config.mute ? 0 : config.volume, wave_names[config.waveform]);
   printf("Hotkeys: [P/Space] Pause | [F1] Keymap Help | [F5] Save State | [F9] Load State | [F10] Step | [Tab] Debug Pause | [F11] Fullscreen | [Esc] Exit\n");
+  printf("Gamepad: [D-pad/Stick] Move | [A/B/X/Y] Action | [Start] Pause | [Back] Reset\n");
   printf("Keymap: %s (Press F1 to display keypad bindings)\n", config.keymap.name);
 
   bool is_paused = config.debug;
@@ -588,6 +616,71 @@ int main(int argc, char **argv) {
         int k = map_sdl_key_to_chip8(event.key.keysym.sym, &config.keymap);
         if (k != -1) {
           chip8.keypad[k] = 0;
+        }
+      } else if (event.type == SDL_CONTROLLERDEVICEADDED) {
+        if (!controller) {
+          controller = SDL_GameControllerOpen(event.cdevice.which);
+          if (controller) {
+            printf("[GAMEPAD] Controller connected: %s\n", SDL_GameControllerName(controller));
+          }
+        }
+      } else if (event.type == SDL_CONTROLLERDEVICEREMOVED) {
+        if (controller) {
+          SDL_Joystick *joy = SDL_GameControllerGetJoystick(controller);
+          if (joy && SDL_JoystickInstanceID(joy) == event.cdevice.which) {
+            printf("[GAMEPAD] Controller disconnected\n");
+            SDL_GameControllerClose(controller);
+            controller = NULL;
+          }
+        }
+      } else if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+        if (event.cbutton.button == SDL_CONTROLLER_BUTTON_START) {
+          is_paused = !is_paused;
+          char updated_title[200];
+          snprintf(updated_title, sizeof(updated_title), "%s%s", window_title, is_paused ? " [PAUSED]" : "");
+          SDL_SetWindowTitle(window, updated_title);
+          if (is_paused && config.debug) {
+            chip8_dump_debug(&chip8);
+          }
+        } else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) {
+          chip8_init(&chip8);
+          chip8_load_rom(&chip8, config.rom_path);
+          printf("[GAMEPAD] Reset ROM: %s\n", config.rom_path);
+        } else {
+          int k = map_controller_button_to_chip8(event.cbutton.button);
+          if (k != -1) {
+            chip8.keypad[k] = 1;
+          }
+        }
+      } else if (event.type == SDL_CONTROLLERBUTTONUP) {
+        int k = map_controller_button_to_chip8(event.cbutton.button);
+        if (k != -1) {
+          chip8.keypad[k] = 0;
+        }
+      } else if (event.type == SDL_CONTROLLERAXISMOTION) {
+        const int16_t deadzone = 16000;
+        if (event.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
+          if (event.caxis.value < -deadzone) {
+            chip8.keypad[0x4] = 1; // Left
+            chip8.keypad[0x6] = 0;
+          } else if (event.caxis.value > deadzone) {
+            chip8.keypad[0x6] = 1; // Right
+            chip8.keypad[0x4] = 0;
+          } else {
+            if (!controller || !SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) chip8.keypad[0x4] = 0;
+            if (!controller || !SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) chip8.keypad[0x6] = 0;
+          }
+        } else if (event.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+          if (event.caxis.value < -deadzone) {
+            chip8.keypad[0x2] = 1; // Up
+            chip8.keypad[0x8] = 0;
+          } else if (event.caxis.value > deadzone) {
+            chip8.keypad[0x8] = 1; // Down
+            chip8.keypad[0x2] = 0;
+          } else {
+            if (!controller || !SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP)) chip8.keypad[0x2] = 0;
+            if (!controller || !SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) chip8.keypad[0x8] = 0;
+          }
         }
       }
     }
@@ -763,6 +856,10 @@ int main(int argc, char **argv) {
     SDL_Delay(1);
   }
 
+  if (controller) {
+    SDL_GameControllerClose(controller);
+    controller = NULL;
+  }
   if (audio_device != 0) {
     SDL_CloseAudioDevice(audio_device);
   }
