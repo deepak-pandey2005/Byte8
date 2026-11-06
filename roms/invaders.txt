@@ -1,0 +1,326 @@
+# Space Invaders Arcade Game for Byte8 CHIP-8
+# Controls:
+#   Key 4: Move Left   (A / Q / Gamepad D-pad Left)
+#   Key 6: Move Right  (D / E / Gamepad D-pad Right)
+#   Key 5: Fire Laser  (W / Space / Gamepad A Button)
+#
+# Register Mapping:
+#   v0, v1: Scratchpad / Coordinate parameters
+#   v2: Player Ship X (horizontal coordinate, 2-54)
+#   v3: Player Ship Y (fixed at 26)
+#   v4: Laser Active Flag (0=Inactive, 1=Active)
+#   v5, v6: Laser Position (X, Y)
+#   v7, v8: Alien 1 Position (X, Y)
+#   v9, vA: Alien 2 Position (X, Y)
+#   vB: Alien Alive Bitmask (bit 0 = Alien 1, bit 1 = Alien 2)
+#   vC: Alien March Direction (1=Right, 0=Left)
+#   vD: Alien March Timer / Speed divider
+#   vE: Player Score Counter
+
+start:
+    cls
+    v2 = 28             ; Player Ship X (centered)
+    v3 = 26             ; Player Ship Y
+    v4 = 0              ; Laser inactive
+    v5 = 0
+    v6 = 0
+    v7 = 12             ; Alien 1 X
+    v8 = 6              ; Alien 1 Y
+    v9 = 28             ; Alien 2 X
+    vA = 6              ; Alien 2 Y
+    vB = 3              ; Both aliens alive (binary 0011)
+    vC = 1              ; March Right
+    vD = 0              ; Step counter
+    vE = 0              ; Score
+
+main_loop:
+    # ----------------------------------------------------
+    # Synchronize Frame Rate with Hardware Delay Timer
+    # ----------------------------------------------------
+wait_frame:
+    v0 = delay
+    if v0 != 0
+    jump wait_frame
+    v0 = 2
+    delay = v0
+
+    # ----------------------------------------------------
+    # Input Handling: Left, Right, Fire
+    # ----------------------------------------------------
+    v0 = 4              ; Key 4: Left
+    skip_nkey v0
+    call move_left
+
+    v0 = 6              ; Key 6: Right
+    skip_nkey v0
+    call move_right
+
+    v0 = 5              ; Key 5: Fire Laser
+    skip_nkey v0
+    call fire_laser
+
+    # ----------------------------------------------------
+    # Laser Movement & Bounds
+    # ----------------------------------------------------
+    if v4 == 0
+    jump update_aliens
+
+    v6 -= 2
+    if v6 != 2
+    jump check_laser_top
+    v4 = 0              ; Laser reached top edge
+    jump update_aliens
+
+check_laser_top:
+    if v6 != 0
+    jump update_aliens
+    v4 = 0
+
+    # ----------------------------------------------------
+    # Alien Marching Physics
+    # ----------------------------------------------------
+update_aliens:
+    vD += 1
+    if vD != 4
+    jump check_collisions
+    vD = 0
+
+    if vC == 0
+    jump march_left
+
+march_right:
+    v7 += 2
+    v9 += 2
+    if v9 != 54
+    jump check_aliens_descent
+    vC = 0              ; Hit right boundary: march left next
+    v8 += 2             ; Descend towards player
+    vA += 2
+    jump check_aliens_descent
+
+march_left:
+    v7 -= 2
+    v9 -= 2
+    if v7 != 2
+    jump check_aliens_descent
+    vC = 1              ; Hit left boundary: march right next
+    v8 += 2             ; Descend towards player
+    vA += 2
+
+check_aliens_descent:
+    if v8 != 24
+    jump check_descent_alien2
+    jump game_over      ; Alien 1 landed on base!
+
+check_descent_alien2:
+    if vA != 24
+    jump check_collisions
+    jump game_over      ; Alien 2 landed on base!
+
+    # ----------------------------------------------------
+    # Collision Detection: Laser vs Aliens
+    # ----------------------------------------------------
+check_collisions:
+    if v4 == 0
+    jump check_wave_clear
+
+    # Check Alien 1 collision if alive (bit 0 of vB)
+    v0 = vB
+    v1 = 1
+    v0 &= v1
+    if v0 == 0
+    jump test_alien2
+
+    # Check Y range: (v6 >= v8) and (v6 <= v8 + 4)
+    v0 = v6
+    v0 -= v8
+    if vF == 0
+    jump test_alien2    ; Laser above Alien 1
+    v1 = 5
+    v1 -= v0
+    if vF == 0
+    jump test_alien2    ; Laser below Alien 1
+
+    # Check X range: (v5 >= v7) and (v5 <= v7 + 7)
+    v0 = v5
+    v0 -= v7
+    if vF == 0
+    jump test_alien2    ; Laser to the left of Alien 1
+    v1 = 8
+    v1 -= v0
+    if vF == 0
+    jump test_alien2    ; Laser to the right of Alien 1
+
+    # Hit Alien 1!
+    v1 = 1
+    vB ^= v1            ; Deactivate Alien 1
+    v4 = 0              ; Deactivate Laser
+    vE += 1             ; Score + 1
+    v0 = 8
+    sound = v0          ; Trigger explosion sound
+    jump check_wave_clear
+
+test_alien2:
+    # Check Alien 2 collision if alive (bit 1 of vB)
+    v0 = vB
+    v1 = 2
+    v0 &= v1
+    if v0 == 0
+    jump check_wave_clear
+
+    # Check Y range: (v6 >= vA) and (v6 <= vA + 4)
+    v0 = v6
+    v0 -= vA
+    if vF == 0
+    jump check_wave_clear
+    v1 = 5
+    v1 -= v0
+    if vF == 0
+    jump check_wave_clear
+
+    # Check X range: (v5 >= v9) and (v5 <= v9 + 7)
+    v0 = v5
+    v0 -= v9
+    if vF == 0
+    jump check_wave_clear
+    v1 = 8
+    v1 -= v0
+    if vF == 0
+    jump check_wave_clear
+
+    # Hit Alien 2!
+    v1 = 2
+    vB ^= v1            ; Deactivate Alien 2
+    v4 = 0              ; Deactivate Laser
+    vE += 1             ; Score + 1
+    v0 = 8
+    sound = v0          ; Trigger explosion sound
+
+check_wave_clear:
+    if vB != 0
+    jump render_frame
+    # Both aliens eliminated! Respawn next wave at top
+    v7 = 12
+    v8 = 6
+    v9 = 28
+    vA = 6
+    vB = 3
+    vC = 1
+    vD = 0
+    v0 = 14
+    sound = v0          ; Victory fanfare beep
+
+    # ----------------------------------------------------
+    # Graphics Rendering Pass
+    # ----------------------------------------------------
+render_frame:
+    cls
+
+    # Draw Score Digit in top-left corner (0-F font sprite)
+    v0 = 2
+    v1 = 1
+    i = font vE
+    draw v0, v1, 5
+
+    # Draw Player Ship at (v2, v3)
+    v0 = v2
+    v1 = v3
+    i = ship_sprite
+    draw v0, v1, 4
+
+    # Draw Laser if active
+    if v4 == 0
+    jump draw_aliens
+    v0 = v5
+    v1 = v6
+    i = laser_sprite
+    draw v0, v1, 2
+
+draw_aliens:
+    # Draw Alien 1 if alive
+    v0 = vB
+    v1 = 1
+    v0 &= v1
+    if v0 == 0
+    jump draw_alien2
+    v0 = v7
+    v1 = v8
+    i = alien_sprite
+    draw v0, v1, 4
+
+draw_alien2:
+    # Draw Alien 2 if alive
+    v0 = vB
+    v1 = 2
+    v0 &= v1
+    if v0 == 0
+    jump finish_render
+    v0 = v9
+    v1 = vA
+    i = alien_sprite
+    draw v0, v1, 4
+
+finish_render:
+    jump main_loop
+
+    # ----------------------------------------------------
+    # Subroutines
+    # ----------------------------------------------------
+move_left:
+    if v2 == 2
+    ret
+    v2 -= 2
+    ret
+
+move_right:
+    if v2 == 54
+    ret
+    v2 += 2
+    ret
+
+fire_laser:
+    if v4 == 1
+    ret
+    v4 = 1              ; Activate laser
+    v5 = v2             ; Align with ship center
+    v5 += 3
+    v6 = 24             ; Just above ship nose
+    v0 = 4
+    sound = v0          ; Laser fire sound pulse
+    ret
+
+game_over:
+    v0 = 30
+    sound = v0          ; Long defeat alarm sound
+    cls
+    # Show defeat score and restart after delay
+    v0 = 30
+    v1 = 14
+    i = font vE
+    draw v0, v1, 5
+    v0 = 45
+    delay = v0
+wait_game_over:
+    v0 = delay
+    if v0 != 0
+    jump wait_game_over
+    jump start
+
+    # ----------------------------------------------------
+    # Sprites Data Section (Even byte aligned)
+    # ----------------------------------------------------
+ship_sprite:
+    db 0x18             ;   ..XX....
+    db 0x3C             ;   .XXXX...
+    db 0x7E             ;   .XXXXXX.
+    db 0xFF             ;   XXXXXXXX
+
+alien_sprite:
+    db 0x99             ;   X..XX..X
+    db 0x5A             ;   .X.XX.X.
+    db 0x3C             ;   ..XXXX..
+    db 0xE7             ;   XXX..XXX
+
+laser_sprite:
+    db 0x80             ;   X.......
+    db 0x80             ;   X.......
