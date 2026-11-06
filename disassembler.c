@@ -5,8 +5,31 @@
 
 #define START_ADDRESS 0x200
 #define MAX_ROM_SIZE (4096 - START_ADDRESS)
+#define MAX_LABELS 2048
 
-static void disassemble_opcode(uint16_t addr, uint16_t op, FILE *out) {
+typedef struct {
+    uint16_t addresses[MAX_LABELS];
+    int count;
+} LabelMap;
+
+static bool label_map_contains(const LabelMap *map, uint16_t addr) {
+    if (!map) return false;
+    for (int i = 0; i < map->count; i++) {
+        if (map->addresses[i] == addr) return true;
+    }
+    return false;
+}
+
+static void label_map_add(LabelMap *map, uint16_t addr) {
+    if (!map || addr < START_ADDRESS || addr >= 4096) return;
+    if (addr % 2 != 0) return; // Only word-aligned targets are instruction labels
+    if (label_map_contains(map, addr)) return;
+    if (map->count < MAX_LABELS) {
+        map->addresses[map->count++] = addr;
+    }
+}
+
+static void disassemble_opcode(uint16_t addr, uint16_t op, const LabelMap *labels, FILE *out) {
     uint8_t n1 = (op & 0xF000) >> 12;
     uint8_t x  = (op & 0x0F00) >> 8;
     uint8_t y  = (op & 0x00F0) >> 4;
@@ -40,11 +63,19 @@ static void disassemble_opcode(uint16_t addr, uint16_t op, FILE *out) {
         break;
 
     case 0x1:
-        fprintf(out, "jump 0x%03X\n", nnn);
+        if (label_map_contains(labels, nnn)) {
+            fprintf(out, "jump lbl_%04X\n", nnn);
+        } else {
+            fprintf(out, "jump 0x%03X\n", nnn);
+        }
         break;
 
     case 0x2:
-        fprintf(out, "call 0x%03X\n", nnn);
+        if (label_map_contains(labels, nnn)) {
+            fprintf(out, "call lbl_%04X\n", nnn);
+        } else {
+            fprintf(out, "call 0x%03X\n", nnn);
+        }
         break;
 
     case 0x3:
@@ -115,11 +146,19 @@ static void disassemble_opcode(uint16_t addr, uint16_t op, FILE *out) {
         break;
 
     case 0xA:
-        fprintf(out, "i = 0x%03X\n", nnn);
+        if (label_map_contains(labels, nnn)) {
+            fprintf(out, "i = lbl_%04X\n", nnn);
+        } else {
+            fprintf(out, "i = 0x%03X\n", nnn);
+        }
         break;
 
     case 0xB:
-        fprintf(out, "jump v0 + 0x%03X\n", nnn);
+        if (label_map_contains(labels, nnn)) {
+            fprintf(out, "jump v0 + lbl_%04X\n", nnn);
+        } else {
+            fprintf(out, "jump v0 + 0x%03X\n", nnn);
+        }
         break;
 
     case 0xC:
@@ -245,15 +284,34 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Pass 1: Discover all jump, call, and address targets
+    LabelMap labels = { .count = 0 };
+    for (size_t i = 0; i + 1 < read_bytes; i += 2) {
+        uint16_t op = (buffer[i] << 8) | buffer[i + 1];
+        uint8_t n1 = (op & 0xF000) >> 12;
+        uint16_t nnn = op & 0x0FFF;
+
+        if (n1 == 0x1 || n1 == 0x2 || n1 == 0xB || n1 == 0xA) {
+            if (nnn >= START_ADDRESS && nnn < START_ADDRESS + read_bytes) {
+                label_map_add(&labels, nnn);
+            }
+        }
+    }
+
     fprintf(out, "; ==========================================\n");
     fprintf(out, "; Byte8 Disassembly of: %s (%ld bytes)\n", argv[1], file_size);
+    fprintf(out, "; Labels discovered: %d\n", labels.count);
     fprintf(out, "; ==========================================\n\n");
 
+    // Pass 2: Generate formatted assembly with reconstructed labels
     for (size_t i = 0; i < read_bytes; i += 2) {
         uint16_t current_addr = START_ADDRESS + (uint16_t)i;
+        if (label_map_contains(&labels, current_addr)) {
+            fprintf(out, "\nlbl_%04X:\n", current_addr);
+        }
         if (i + 1 < read_bytes) {
             uint16_t op = (buffer[i] << 8) | buffer[i + 1];
-            disassemble_opcode(current_addr, op, out);
+            disassemble_opcode(current_addr, op, &labels, out);
         } else {
             // Trailing odd byte
             fprintf(out, "/* 0x%03X: 0x%02X   */  db 0x%02X\n", current_addr, buffer[i], buffer[i]);
