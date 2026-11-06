@@ -337,6 +337,73 @@ static void test_breakpoints_and_watchpoints() {
     chip8_list_breakpoints(&c);
 }
 
+static void test_schip_operations() {
+    Chip8 c;
+    chip8_init(&c);
+
+    // Test 00FF (high / hires)
+    run_one_opcode(&c, 0x00FF);
+    TEST_ASSERT(c.hires_mode == true, "00FF sets hires_mode = true");
+    TEST_ASSERT(c.video_width == 128 && c.video_height == 64, "00FF sets 128x64 resolution");
+
+    // Test 00FE (low / lores)
+    run_one_opcode(&c, 0x00FE);
+    TEST_ASSERT(c.hires_mode == false, "00FE sets hires_mode = false");
+    TEST_ASSERT(c.video_width == 64 && c.video_height == 32, "00FE sets 64x32 resolution");
+
+    // Test FX30 (font16)
+    c.V[2] = 5;
+    run_one_opcode(&c, 0xF230);
+    TEST_ASSERT(c.I == SCHIP_FONTSET_START_ADDRESS + (5 * 10), "FX30 sets I to 10-byte font address");
+
+    // Test FX75 / FX85 (RPL user flags)
+    c.V[0] = 0x11;
+    c.V[1] = 0x22;
+    c.V[2] = 0x33;
+    run_one_opcode(&c, 0xF275); // save V0..V2
+    TEST_ASSERT(c.rpl_flags[0] == 0x11 && c.rpl_flags[1] == 0x22 && c.rpl_flags[2] == 0x33, "FX75 saves flags to RPL");
+
+    c.V[0] = 0; c.V[1] = 0; c.V[2] = 0;
+    run_one_opcode(&c, 0xF285); // load V0..V2
+    TEST_ASSERT(c.V[0] == 0x11 && c.V[1] == 0x22 && c.V[2] == 0x33, "FX85 restores flags from RPL");
+
+    // Test 00CN (scroll down)
+    c.video_width = 64; c.video_height = 32;
+    c.gfx[0] = 1;
+    run_one_opcode(&c, 0x00C2); // scroll down 2 lines
+    TEST_ASSERT(c.gfx[0] == 0 && c.gfx[2 * 64] == 1, "00C2 scrolls screen down 2 lines");
+
+    // Test 00FB (scroll right 4)
+    memset(c.gfx, 0, sizeof(c.gfx));
+    c.gfx[0] = 1;
+    run_one_opcode(&c, 0x00FB);
+    TEST_ASSERT(c.gfx[0] == 0 && c.gfx[4] == 1, "00FB scrolls screen right 4 pixels");
+
+    // Test 00FC (scroll left 4)
+    memset(c.gfx, 0, sizeof(c.gfx));
+    c.gfx[10] = 1;
+    run_one_opcode(&c, 0x00FC);
+    TEST_ASSERT(c.gfx[10] == 0 && c.gfx[6] == 1, "00FC scrolls screen left 4 pixels");
+
+    // Test DXY0 16x16 sprite draw
+    c.I = 0x300;
+    for (int i = 0; i < 32; i++) c.memory[0x300 + i] = 0xFF;
+    c.V[0] = 0; c.V[1] = 0;
+    run_one_opcode(&c, 0xD010); // draw 16x16 at (0, 0)
+    TEST_ASSERT(c.gfx[0] == 1 && c.gfx[15] == 1 && c.gfx[15 * 64] == 1, "DXY0 draws 16x16 sprite");
+
+    // Test Disassembly of SCHIP opcodes
+    char d_buf[64];
+    chip8_disasm_opcode(0x00FF, d_buf, sizeof(d_buf));
+    TEST_ASSERT(strcmp(d_buf, "high") == 0, "Disasm 00FF -> high");
+    chip8_disasm_opcode(0x00FE, d_buf, sizeof(d_buf));
+    TEST_ASSERT(strcmp(d_buf, "low") == 0, "Disasm 00FE -> low");
+    chip8_disasm_opcode(0x00C4, d_buf, sizeof(d_buf));
+    TEST_ASSERT(strcmp(d_buf, "scroll_down 4") == 0, "Disasm 00C4 -> scroll_down 4");
+    chip8_disasm_opcode(0xF330, d_buf, sizeof(d_buf));
+    TEST_ASSERT(strcmp(d_buf, "font16 v3") == 0, "Disasm F330 -> font16 v3");
+}
+
 int main(void) {
     printf("=========================================\n");
     printf("Running Byte8 Emulator Opcode Unit Tests\n");
@@ -352,6 +419,7 @@ int main(void) {
     test_legacy_sys();
     test_disasm_and_debug();
     test_breakpoints_and_watchpoints();
+    test_schip_operations();
 
     printf("Results: %d / %d tests passed\n", passed_tests, total_tests);
     if (passed_tests == total_tests) {

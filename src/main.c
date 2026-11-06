@@ -392,14 +392,14 @@ int main(int argc, char **argv) {
   SDL_RenderSetLogicalSize(renderer, VIDEO_WIDTH, VIDEO_HEIGHT);
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
-  // Create an efficient native texture for 64x32 pixel updates
+  // Create texture supporting up to SCHIP 128x64 resolution
   SDL_Texture *screen_texture = SDL_CreateTexture(
       renderer,
       SDL_PIXELFORMAT_ARGB8888,
       SDL_TEXTUREACCESS_STREAMING,
-      VIDEO_WIDTH, VIDEO_HEIGHT);
+      SCHIP_VIDEO_WIDTH, SCHIP_VIDEO_HEIGHT);
 
-  uint32_t pixel_buffer[VIDEO_WIDTH * VIDEO_HEIGHT];
+  uint32_t pixel_buffer[SCHIP_VIDEO_WIDTH * SCHIP_VIDEO_HEIGHT];
   uint32_t bg_color_argb = (0xFF << 24) | (config.theme.bg_r << 16) | (config.theme.bg_g << 8) | config.theme.bg_b;
   uint32_t fg_color_argb = (0xFF << 24) | (config.theme.fg_r << 16) | (config.theme.fg_g << 8) | config.theme.fg_b;
 
@@ -619,17 +619,25 @@ int main(int argc, char **argv) {
       }
     }
 
+    if (chip8.exit_flag) {
+      running = false;
+    }
+
     // Render if screen updated
     if (chip8.draw_flag) {
-      for (int i = 0; i < VIDEO_WIDTH * VIDEO_HEIGHT; i++) {
+      int w = chip8.video_width;
+      int h = chip8.video_height;
+      for (int i = 0; i < w * h; i++) {
         pixel_buffer[i] = chip8.gfx[i] ? fg_color_argb : bg_color_argb;
       }
 
-      SDL_UpdateTexture(screen_texture, NULL, pixel_buffer, VIDEO_WIDTH * sizeof(uint32_t));
+      SDL_Rect src_rect = { 0, 0, w, h };
+      SDL_UpdateTexture(screen_texture, &src_rect, pixel_buffer, w * sizeof(uint32_t));
 
+      SDL_RenderSetLogicalSize(renderer, w, h);
       SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
       SDL_RenderClear(renderer);
-      SDL_RenderCopy(renderer, screen_texture, NULL, NULL);
+      SDL_RenderCopy(renderer, screen_texture, &src_rect, NULL);
       SDL_RenderPresent(renderer);
 
       chip8.draw_flag = false;

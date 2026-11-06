@@ -530,6 +530,24 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
         op = 0x00E0;
     } else if (strcasecmp(line, "ret") == 0 || strcasecmp(line, "return") == 0) {
         op = 0x00EE;
+    } else if (strcasecmp(line, "high") == 0 || strcasecmp(line, "hires") == 0) {
+        op = 0x00FF;
+    } else if (strcasecmp(line, "low") == 0 || strcasecmp(line, "lores") == 0) {
+        op = 0x00FE;
+    } else if (strcasecmp(line, "exit") == 0 || strcasecmp(line, "quit") == 0) {
+        op = 0x00FD;
+    } else if (strcasecmp(line, "scroll_right") == 0 || strcasecmp(line, "scr") == 0) {
+        op = 0x00FB;
+    } else if (strcasecmp(line, "scroll_left") == 0 || strcasecmp(line, "scl") == 0) {
+        op = 0x00FC;
+    } else if (strncasecmp(line, "scroll_down ", 12) == 0 || strncasecmp(line, "scd ", 4) == 0) {
+        const char *arg = (strncasecmp(line, "scroll_down ", 12) == 0) ? line + 12 : line + 4;
+        long n = 0;
+        if (!parse_number(trim_whitespace((char *)arg), &n) || n < 0 || n > 15) {
+            fprintf(stderr, "Error in %s:%d: scroll_down requires line count between 0 and 15.\n", file, line_num);
+            return -1;
+        }
+        op = 0x00C0 | ((uint8_t)n & 0x0F);
     } else if (strncasecmp(line, "sys ", 4) == 0) {
         char target[MAX_LABEL_LEN];
         if (sscanf(line + 4, "%63s", target) == 1) {
@@ -703,6 +721,30 @@ static int assemble_line(char *line, const LabelTable *table, uint8_t *out_bytes
             return -1;
         }
         op = 0xF065 | (vx << 8);
+    } else if (strncasecmp(line, "font16 ", 7) == 0 || strncasecmp(line, "bigfont ", 8) == 0) {
+        const char *arg = (strncasecmp(line, "font16 ", 7) == 0) ? line + 7 : line + 8;
+        int vx = parse_register(trim_whitespace((char *)arg));
+        if (vx == -1) {
+            fprintf(stderr, "Error in %s:%d: Invalid register in font16.\n", file, line_num);
+            return -1;
+        }
+        op = 0xF030 | (vx << 8);
+    } else if (strncasecmp(line, "save_flags ", 11) == 0 || strncasecmp(line, "save_rpl ", 9) == 0) {
+        const char *arg = (strncasecmp(line, "save_flags ", 11) == 0) ? line + 11 : line + 9;
+        int vx = parse_register(trim_whitespace((char *)arg));
+        if (vx == -1) {
+            fprintf(stderr, "Error in %s:%d: Invalid register in save_flags.\n", file, line_num);
+            return -1;
+        }
+        op = 0xF075 | (vx << 8);
+    } else if (strncasecmp(line, "load_flags ", 11) == 0 || strncasecmp(line, "load_rpl ", 9) == 0) {
+        const char *arg = (strncasecmp(line, "load_flags ", 11) == 0) ? line + 11 : line + 9;
+        int vx = parse_register(trim_whitespace((char *)arg));
+        if (vx == -1) {
+            fprintf(stderr, "Error in %s:%d: Invalid register in load_flags.\n", file, line_num);
+            return -1;
+        }
+        op = 0xF085 | (vx << 8);
     } else if ((line[0] == 'v' || line[0] == 'V')) {
         char r_name[32], op_sym[16], shift_amt[16];
         if (sscanf(line, "%31s %15s %15s", r_name, op_sym, shift_amt) == 3 &&

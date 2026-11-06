@@ -7,8 +7,11 @@
 
 #define VIDEO_WIDTH 64
 #define VIDEO_HEIGHT 32
+#define SCHIP_VIDEO_WIDTH 128
+#define SCHIP_VIDEO_HEIGHT 64
 #define STACK_SIZE 16
 #define FONTSET_START_ADDRESS 0x50
+#define SCHIP_FONTSET_START_ADDRESS 0xA0
 
 #define MAX_BREAKPOINTS 32
 #define MAX_WATCHPOINTS 32
@@ -36,9 +39,16 @@ typedef struct {
   uint16_t sp;
   uint8_t delay_timer;
   uint8_t sound_timer;
-  uint8_t gfx[VIDEO_WIDTH * VIDEO_HEIGHT];
+  uint8_t gfx[SCHIP_VIDEO_WIDTH * SCHIP_VIDEO_HEIGHT];
   uint8_t keypad[16];
   bool draw_flag;
+
+  // SUPER-CHIP (SCHIP-8) state
+  bool hires_mode;
+  int video_width;
+  int video_height;
+  uint8_t rpl_flags[16];
+  bool exit_flag;
 
   // Debugging & Instrumentation
   uint64_t cycle_count;

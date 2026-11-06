@@ -50,6 +50,8 @@ static const uint8_t wasm_fontset[80] = {
 WASM_EXPORT void chip8_wasm_init(void) {
     wasm_memset(&chip8_instance, 0, sizeof(Chip8));
     chip8_instance.pc = 0x200;
+    chip8_instance.video_width = VIDEO_WIDTH;
+    chip8_instance.video_height = VIDEO_HEIGHT;
     wasm_memcpy(&chip8_instance.memory[FONTSET_START_ADDRESS], wasm_fontset, sizeof(wasm_fontset));
 }
 

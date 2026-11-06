@@ -18,10 +18,22 @@ static void disassemble_opcode(uint16_t addr, uint16_t op, FILE *out) {
 
     switch (n1) {
     case 0x0:
-        if (op == 0x00E0) {
+        if ((op & 0x00F0) == 0x00C0) {
+            fprintf(out, "scroll_down %d\n", op & 0x000F);
+        } else if (op == 0x00E0) {
             fprintf(out, "cls\n");
         } else if (op == 0x00EE) {
             fprintf(out, "ret\n");
+        } else if (op == 0x00FB) {
+            fprintf(out, "scroll_right\n");
+        } else if (op == 0x00FC) {
+            fprintf(out, "scroll_left\n");
+        } else if (op == 0x00FD) {
+            fprintf(out, "exit\n");
+        } else if (op == 0x00FE) {
+            fprintf(out, "low\n");
+        } else if (op == 0x00FF) {
+            fprintf(out, "high\n");
         } else {
             fprintf(out, "sys 0x%03X\n", nnn);
         }
@@ -148,6 +160,9 @@ static void disassemble_opcode(uint16_t addr, uint16_t op, FILE *out) {
         case 0x29:
             fprintf(out, "i = font v%X\n", x);
             break;
+        case 0x30:
+            fprintf(out, "font16 v%X\n", x);
+            break;
         case 0x33:
             fprintf(out, "bcd v%X\n", x);
             break;
@@ -156,6 +171,12 @@ static void disassemble_opcode(uint16_t addr, uint16_t op, FILE *out) {
             break;
         case 0x65:
             fprintf(out, "load v%X\n", x);
+            break;
+        case 0x75:
+            fprintf(out, "save_flags v%X\n", x);
+            break;
+        case 0x85:
+            fprintf(out, "load_flags v%X\n", x);
             break;
         default:
             fprintf(out, "db 0x%02X, 0x%02X  ; unknown 0xF opcode\n", (op >> 8) & 0xFF, op & 0xFF);

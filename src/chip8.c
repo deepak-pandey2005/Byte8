@@ -25,15 +25,33 @@ static const uint8_t chip8_fontset[80] = {
     0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
+static const uint8_t schip_fontset[100] = {
+    0x3C, 0x7E, 0xE7, 0xC3, 0xC3, 0xC3, 0xC3, 0xE7, 0x7E, 0x3C, // 0
+    0x18, 0x38, 0x78, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x7E, // 1
+    0x7E, 0xFF, 0x87, 0x06, 0x0C, 0x18, 0x30, 0x60, 0xFF, 0xFF, // 2
+    0x7E, 0xFF, 0x87, 0x06, 0x1C, 0x06, 0x03, 0x87, 0xFF, 0x7E, // 3
+    0x0C, 0x1C, 0x3C, 0x6C, 0xCC, 0xFE, 0xFF, 0x0C, 0x0C, 0x1E, // 4
+    0xFF, 0xFF, 0xC0, 0xC0, 0xFC, 0xFE, 0x07, 0x03, 0xFF, 0xFC, // 5
+    0x3E, 0x7C, 0xE0, 0xC0, 0xFC, 0xFE, 0xC7, 0xC3, 0x7E, 0x3C, // 6
+    0xFF, 0xFF, 0x03, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x60, 0x60, // 7
+    0x3C, 0x7E, 0xC3, 0xE7, 0x7E, 0x7E, 0xE7, 0xC3, 0x7E, 0x3C, // 8
+    0x3C, 0x7E, 0xC3, 0xE3, 0x7F, 0x3F, 0x03, 0x07, 0x3E, 0x1C  // 9
+};
+
 void chip8_init(Chip8 *chip8) {
   memset(chip8, 0, sizeof(Chip8));
   chip8->pc = 0x200; // CHIP-8 programs start at 0x200
+  chip8->video_width = VIDEO_WIDTH;
+  chip8->video_height = VIDEO_HEIGHT;
+  chip8->hires_mode = false;
+  chip8->exit_flag = false;
 
   // Seed the random number generator
   srand((unsigned int)time(NULL));
 
-  // Load fontset into memory at 0x050
+  // Load standard fontset at 0x050 and SCHIP fontset at 0x0A0
   memcpy(&chip8->memory[FONTSET_START_ADDRESS], chip8_fontset, sizeof(chip8_fontset));
+  memcpy(&chip8->memory[SCHIP_FONTSET_START_ADDRESS], schip_fontset, sizeof(schip_fontset));
 }
 
 bool chip8_load_rom(Chip8 *chip8, const char *filename) {
@@ -163,27 +181,94 @@ void chip8_cycle(Chip8 *chip8) {
   switch (op & 0xF000) {
 
   case 0x0000:
-    switch (nn) {
-    // 00E0 → Clear screen
-    case 0x00E0:
-      memset(chip8->gfx, 0, sizeof(chip8->gfx));
-      chip8->draw_flag = true;
-      break;
-
-    // 00EE → Return from subroutine
-    case 0x00EE:
-      if (chip8->sp > 0) {
-        chip8->sp--;
-        chip8->pc = chip8->stack[chip8->sp];
-      } else {
-        fprintf(stderr, "Stack underflow!\n");
+    if ((op & 0x00F0) == 0x00C0) {
+      // 00CN: Scroll display down by N lines
+      int n_lines = op & 0x000F;
+      int w = chip8->video_width;
+      int h = chip8->video_height;
+      for (int y = h - 1; y >= n_lines; y--) {
+        memcpy(&chip8->gfx[y * w], &chip8->gfx[(y - n_lines) * w], w);
       }
-      break;
+      for (int y = 0; y < n_lines && y < h; y++) {
+        memset(&chip8->gfx[y * w], 0, w);
+      }
+      chip8->draw_flag = true;
+    } else {
+      switch (nn) {
+      // 00E0 → Clear screen
+      case 0x00E0:
+        memset(chip8->gfx, 0, sizeof(chip8->gfx));
+        chip8->draw_flag = true;
+        break;
 
-    default:
-      // 0NNN → Call RCA 1802 machine language routine at NNN (legacy no-op in modern interpreters)
-      printf("[INFO] Legacy machine routine 0x%04X ignored\n", op);
-      break;
+      // 00EE → Return from subroutine
+      case 0x00EE:
+        if (chip8->sp > 0) {
+          chip8->sp--;
+          chip8->pc = chip8->stack[chip8->sp];
+        } else {
+          fprintf(stderr, "Stack underflow!\n");
+        }
+        break;
+
+      // 00FB → Scroll right 4 pixels
+      case 0x00FB: {
+        int w = chip8->video_width;
+        int h = chip8->video_height;
+        for (int y = 0; y < h; y++) {
+          for (int x = w - 1; x >= 4; x--) {
+            chip8->gfx[y * w + x] = chip8->gfx[y * w + (x - 4)];
+          }
+          for (int x = 0; x < 4 && x < w; x++) {
+            chip8->gfx[y * w + x] = 0;
+          }
+        }
+        chip8->draw_flag = true;
+      } break;
+
+      // 00FC → Scroll left 4 pixels
+      case 0x00FC: {
+        int w = chip8->video_width;
+        int h = chip8->video_height;
+        for (int y = 0; y < h; y++) {
+          for (int x = 0; x < w - 4; x++) {
+            chip8->gfx[y * w + x] = chip8->gfx[y * w + (x + 4)];
+          }
+          for (int x = w - 4; x < w; x++) {
+            if (x >= 0) chip8->gfx[y * w + x] = 0;
+          }
+        }
+        chip8->draw_flag = true;
+      } break;
+
+      // 00FD → Exit interpreter
+      case 0x00FD:
+        chip8->exit_flag = true;
+        break;
+
+      // 00FE → Disable extended screen mode (64x32)
+      case 0x00FE:
+        chip8->hires_mode = false;
+        chip8->video_width = VIDEO_WIDTH;
+        chip8->video_height = VIDEO_HEIGHT;
+        memset(chip8->gfx, 0, sizeof(chip8->gfx));
+        chip8->draw_flag = true;
+        break;
+
+      // 00FF → Enable extended screen mode (128x64)
+      case 0x00FF:
+        chip8->hires_mode = true;
+        chip8->video_width = SCHIP_VIDEO_WIDTH;
+        chip8->video_height = SCHIP_VIDEO_HEIGHT;
+        memset(chip8->gfx, 0, sizeof(chip8->gfx));
+        chip8->draw_flag = true;
+        break;
+
+      default:
+        // 0NNN → Call RCA 1802 machine language routine at NNN (legacy no-op in modern interpreters)
+        printf("[INFO] Legacy machine routine 0x%04X ignored\n", op);
+        break;
+      }
     }
     break;
 
@@ -324,23 +409,41 @@ void chip8_cycle(Chip8 *chip8) {
   case 0xD000: {
     uint8_t x = chip8->V[vx];
     uint8_t y = chip8->V[vy];
-    uint8_t height = n;
-
     chip8->V[0xF] = 0;
+    int w = chip8->video_width;
+    int h = chip8->video_height;
 
-    for (int row = 0; row < height; row++) {
-      uint8_t sprite = chip8->memory[chip8->I + row];
-
-      for (int col = 0; col < 8; col++) {
-        if (sprite & (0x80 >> col)) {
-          int px = (x + col) % VIDEO_WIDTH;
-          int py = (y + row) % VIDEO_HEIGHT;
-          int index = px + (py * VIDEO_WIDTH);
-
-          if (chip8->gfx[index] == 1) {
-            chip8->V[0xF] = 1;
+    if (n == 0) {
+      // 16x16 sprite in SCHIP mode: 16 rows of 2 bytes each (32 bytes)
+      for (int row = 0; row < 16; row++) {
+        uint16_t sprite_row = (chip8->memory[chip8->I + (row * 2)] << 8) |
+                               chip8->memory[chip8->I + (row * 2) + 1];
+        int py = (y + row) % h;
+        for (int col = 0; col < 16; col++) {
+          if (sprite_row & (0x8000 >> col)) {
+            int px = (x + col) % w;
+            int index = px + (py * w);
+            if (chip8->gfx[index] == 1) {
+              chip8->V[0xF] = 1;
+            }
+            chip8->gfx[index] ^= 1;
           }
-          chip8->gfx[index] ^= 1;
+        }
+      }
+    } else {
+      // Standard 8xN sprite
+      for (int row = 0; row < n; row++) {
+        uint8_t sprite = chip8->memory[chip8->I + row];
+        int py = (y + row) % h;
+        for (int col = 0; col < 8; col++) {
+          if (sprite & (0x80 >> col)) {
+            int px = (x + col) % w;
+            int index = px + (py * w);
+            if (chip8->gfx[index] == 1) {
+              chip8->V[0xF] = 1;
+            }
+            chip8->gfx[index] ^= 1;
+          }
         }
       }
     }
@@ -414,6 +517,11 @@ void chip8_cycle(Chip8 *chip8) {
       chip8->I = FONTSET_START_ADDRESS + ((chip8->V[vx] & 0x0F) * 5);
       break;
 
+    // FX30: Set I = address of 10-byte font character for VX (SCHIP)
+    case 0x0030:
+      chip8->I = SCHIP_FONTSET_START_ADDRESS + ((chip8->V[vx] & 0x0F) * 10);
+      break;
+
     // FX33: Store BCD representation of VX at I, I+1, I+2
     case 0x0033: {
       uint8_t val = chip8->V[vx];
@@ -433,6 +541,20 @@ void chip8_cycle(Chip8 *chip8) {
     case 0x0065:
       for (int i = 0; i <= vx; i++) {
         chip8->V[i] = chip8->memory[chip8->I + i];
+      }
+      break;
+
+    // FX75: Save V0 through VX into RPL user flags (SCHIP)
+    case 0x0075:
+      for (int i = 0; i <= vx && i < 16; i++) {
+        chip8->rpl_flags[i] = chip8->V[i];
+      }
+      break;
+
+    // FX85: Load V0 through VX from RPL user flags (SCHIP)
+    case 0x0085:
+      for (int i = 0; i <= vx && i < 16; i++) {
+        chip8->V[i] = chip8->rpl_flags[i];
       }
       break;
 
@@ -460,8 +582,14 @@ void chip8_disasm_opcode(uint16_t op, char *out_buf, size_t buf_size) {
 
   switch (n1) {
   case 0x0:
-    if (op == 0x00E0) snprintf(out_buf, buf_size, "cls");
+    if ((op & 0x00F0) == 0x00C0) snprintf(out_buf, buf_size, "scroll_down %d", op & 0x000F);
+    else if (op == 0x00E0) snprintf(out_buf, buf_size, "cls");
     else if (op == 0x00EE) snprintf(out_buf, buf_size, "ret");
+    else if (op == 0x00FB) snprintf(out_buf, buf_size, "scroll_right");
+    else if (op == 0x00FC) snprintf(out_buf, buf_size, "scroll_left");
+    else if (op == 0x00FD) snprintf(out_buf, buf_size, "exit");
+    else if (op == 0x00FE) snprintf(out_buf, buf_size, "low");
+    else if (op == 0x00FF) snprintf(out_buf, buf_size, "high");
     else snprintf(out_buf, buf_size, "sys 0x%03X", nnn);
     break;
   case 0x1: snprintf(out_buf, buf_size, "jump 0x%03X", nnn); break;
@@ -509,9 +637,12 @@ void chip8_disasm_opcode(uint16_t op, char *out_buf, size_t buf_size) {
     case 0x18: snprintf(out_buf, buf_size, "sound = v%X", x); break;
     case 0x1E: snprintf(out_buf, buf_size, "i += v%X", x); break;
     case 0x29: snprintf(out_buf, buf_size, "i = font v%X", x); break;
+    case 0x30: snprintf(out_buf, buf_size, "font16 v%X", x); break;
     case 0x33: snprintf(out_buf, buf_size, "bcd v%X", x); break;
     case 0x55: snprintf(out_buf, buf_size, "save v%X", x); break;
     case 0x65: snprintf(out_buf, buf_size, "load v%X", x); break;
+    case 0x75: snprintf(out_buf, buf_size, "save_flags v%X", x); break;
+    case 0x85: snprintf(out_buf, buf_size, "load_flags v%X", x); break;
     default:   snprintf(out_buf, buf_size, "db 0x%02X, 0x%02X", (op >> 8) & 0xFF, op & 0xFF); break;
     }
     break;
