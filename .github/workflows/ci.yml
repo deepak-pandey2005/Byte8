@@ -1,0 +1,93 @@
+name: CI/CD Pipeline & GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build & Test (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [ gcc, clang ]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev clang lld
+
+      - name: Build all targets with ${{ matrix.compiler }}
+        run: |
+          make clean
+          make all CC=${{ matrix.compiler }}
+
+      - name: Run complete test suite
+        run: |
+          CC=${{ matrix.compiler }} make test
+
+      - name: Run AddressSanitizer & UndefinedBehaviorSanitizer
+        run: |
+          make asan CC=${{ matrix.compiler }}
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies for WebAssembly compilation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld
+
+      - name: Compile WebAssembly & ROMs
+        run: |
+          make $(make -pn | grep -q '^compiler:' && echo 'compiler')
+          make web/chip8.wasm
+          for src in roms/*.txt; do
+            rom="$(basename "$src" .txt)"
+            ./compiler "$src" "roms/${rom}.ch8"
+          done
+
+      - name: Prepare GitHub Pages bundle
+        run: |
+          mkdir -p _site
+          cp web/index.html _site/
+          cp web/chip8.wasm _site/
+          cp -r roms _site/
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_site'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

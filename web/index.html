@@ -360,8 +360,18 @@
       romBufferOffset = wasmExports.chip8_wasm_get_rom_buffer();
       gfxBufferOffset = wasmExports.chip8_wasm_get_gfx_buffer();
 
+      async function fetchRomFile(path) {
+        let r = await fetch(path);
+        if (!r.ok && path.startsWith('../')) {
+          r = await fetch(path.replace(/^\.\.\//, ''));
+        } else if (!r.ok && !path.startsWith('../')) {
+          r = await fetch('../' + path);
+        }
+        return r;
+      }
+
       // Load initial ROM
-      const romResp = await fetch(romSelect.value);
+      const romResp = await fetchRomFile(romSelect.value);
       const romBytes = new Uint8Array(await romResp.arrayBuffer());
       loadRom(romBytes);
 
@@ -370,7 +380,16 @@
 
     loadBtn.addEventListener('click', async () => {
       initAudio();
-      const resp = await fetch(romSelect.value);
+      async function fetchRomFile(path) {
+        let r = await fetch(path);
+        if (!r.ok && path.startsWith('../')) {
+          r = await fetch(path.replace(/^\.\.\//, ''));
+        } else if (!r.ok && !path.startsWith('../')) {
+          r = await fetch('../' + path);
+        }
+        return r;
+      }
+      const resp = await fetchRomFile(romSelect.value);
       const bytes = new Uint8Array(await resp.arrayBuffer());
       loadRom(bytes);
     });

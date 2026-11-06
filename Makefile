@@ -53,5 +53,10 @@ $(TARGET): $(OBJS)
 clean:
 	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(WASM_TARGET) $(TEST_TARGET)
 
+# AddressSanitizer & UndefinedBehaviorSanitizer memory safety target
+asan:
+	$(MAKE) clean
+	CFLAGS="$(CFLAGS) -fsanitize=address,undefined -g" LDFLAGS="$(LDFLAGS) -fsanitize=address,undefined" $(MAKE) test
+
 # Phony targets (prevents conflicts if files named 'all' or 'clean' exist)
-.PHONY: all clean compiler disassembler wasm test
+.PHONY: all clean compiler disassembler wasm test asan

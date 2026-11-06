@@ -8,14 +8,14 @@ echo "================================================="
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "[1/4] Building all project targets..."
+echo "[1/5] Building all project targets..."
 make clean > /dev/null
 make all > /dev/null
 echo "  -> Targets compiled successfully: chip8, compiler, disassembler, web/chip8.wasm"
 
 echo ""
-echo "[2/4] Running Emulator Opcode Unit Tests..."
-gcc -Wall -Wextra -std=c99 tests/test_opcodes.c src/chip8.c -o tests/test_opcodes
+echo "[2/5] Running Emulator Opcode Unit Tests..."
+${CC:-gcc} ${CFLAGS:--Wall -Wextra -std=c99} tests/test_opcodes.c src/chip8.c -o tests/test_opcodes
 ./tests/test_opcodes
 rm -f tests/test_opcodes
 
