@@ -10,6 +10,22 @@
 #define STACK_SIZE 16
 #define FONTSET_START_ADDRESS 0x50
 
+#define MAX_BREAKPOINTS 32
+#define MAX_WATCHPOINTS 32
+
+typedef struct {
+  uint16_t address;
+  bool is_active;
+} Breakpoint;
+
+typedef struct {
+  bool is_reg;           // true if watching V[reg_index], false if memory[mem_addr]
+  uint8_t reg_index;
+  uint16_t mem_addr;
+  uint8_t last_value;
+  bool is_active;
+} Watchpoint;
+
 typedef struct {
   uint8_t memory[4096];
   uint8_t V[16];
@@ -23,6 +39,16 @@ typedef struct {
   uint8_t gfx[VIDEO_WIDTH * VIDEO_HEIGHT];
   uint8_t keypad[16];
   bool draw_flag;
+
+  // Debugging & Instrumentation
+  uint64_t cycle_count;
+  Breakpoint breakpoints[MAX_BREAKPOINTS];
+  int breakpoint_count;
+  Watchpoint watchpoints[MAX_WATCHPOINTS];
+  int watchpoint_count;
+  bool breakpoint_hit;
+  bool watchpoint_hit;
+  char watchpoint_hit_desc[128];
 } Chip8;
 
 void chip8_init(Chip8 *chip8);
@@ -34,5 +60,14 @@ bool chip8_load_state(Chip8 *chip8, const char *filename);
 void chip8_disasm_opcode(uint16_t opcode, char *out_buf, size_t buf_size);
 void chip8_dump_debug(const Chip8 *chip8);
 void chip8_dump_memory(const Chip8 *chip8, uint16_t addr, size_t count);
+
+bool chip8_add_breakpoint(Chip8 *chip8, uint16_t addr);
+bool chip8_remove_breakpoint(Chip8 *chip8, uint16_t addr);
+void chip8_list_breakpoints(const Chip8 *chip8);
+bool chip8_check_breakpoint(Chip8 *chip8);
+
+bool chip8_add_watchpoint_reg(Chip8 *chip8, uint8_t reg_idx);
+bool chip8_add_watchpoint_mem(Chip8 *chip8, uint16_t mem_addr);
+bool chip8_check_watchpoints(Chip8 *chip8);
 
 #endif

@@ -56,7 +56,35 @@ typedef struct {
   WaveformType waveform; // square, sine, triangle, sawtooth
   ColorTheme theme;
   bool debug;      // interactive debugger mode
+  uint16_t initial_breakpoints[MAX_BREAKPOINTS];
+  int initial_breakpoint_count;
+  char initial_watchpoints[MAX_WATCHPOINTS][32];
+  int initial_watchpoint_count;
 } EmulatorConfig;
+
+static void apply_watchpoint_str(Chip8 *chip8, const char *arg) {
+  if (!arg || !*arg) return;
+  if (arg[0] == 'v' || arg[0] == 'V') {
+    int reg = -1;
+    if (arg[1] >= '0' && arg[1] <= '9') reg = arg[1] - '0';
+    else if (arg[1] >= 'a' && arg[1] <= 'f') reg = 10 + (arg[1] - 'a');
+    else if (arg[1] >= 'A' && arg[1] <= 'F') reg = 10 + (arg[1] - 'A');
+    if (reg >= 0 && reg <= 15) {
+      chip8_add_watchpoint_reg(chip8, (uint8_t)reg);
+      printf("[WATCHPOINT] Watching register V%X (initial: 0x%02X)\n", reg, chip8->V[reg]);
+    } else {
+      printf("Error: Invalid register name '%s'\n", arg);
+    }
+  } else {
+    uint16_t addr = (uint16_t)strtoul(arg, NULL, 0);
+    if (addr < 4096) {
+      chip8_add_watchpoint_mem(chip8, addr);
+      printf("[WATCHPOINT] Watching memory [0x%03X] (initial: 0x%02X)\n", addr, chip8->memory[addr]);
+    } else {
+      printf("Error: Memory address 0x%04X out of bounds\n", addr);
+    }
+  }
+}
 
 // Audio Callback synthesizing the selected waveform with volume scaling
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
@@ -146,6 +174,8 @@ static void print_usage(const char *prog_name) {
   printf("  --fps <num>            Display/timer refresh rate in Hz (default: 60)\n");
   printf("  --theme <name>         Color theme (classic, matrix, amber, gameboy, cyber)\n");
   printf("  -d, --debug            Launch interactive terminal debugger\n");
+  printf("  --break <addr>         Set breakpoint at address (e.g. 0x220)\n");
+  printf("  --watch <reg/addr>     Set watchpoint on register (e.g. V3) or memory (e.g. 0x300)\n");
   printf("\nAudio Options:\n");
   printf("  --volume <0-100>       Audio buzzer volume (default: 50)\n");
   printf("  --pitch <hz>           Buzzer pitch frequency in Hz (default: 440)\n");
@@ -193,6 +223,8 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
   config->waveform = WAVE_SQUARE;
   config->theme = COLOR_THEMES[0]; // default: classic
   config->debug = false;
+  config->initial_breakpoint_count = 0;
+  config->initial_watchpoint_count = 0;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -200,6 +232,14 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
       return 0;
     } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
       config->debug = true;
+    } else if (strcmp(argv[i], "--break") == 0 && i + 1 < argc) {
+      if (config->initial_breakpoint_count < MAX_BREAKPOINTS) {
+        config->initial_breakpoints[config->initial_breakpoint_count++] = (uint16_t)strtoul(argv[++i], NULL, 0);
+      }
+    } else if (strcmp(argv[i], "--watch") == 0 && i + 1 < argc) {
+      if (config->initial_watchpoint_count < MAX_WATCHPOINTS) {
+        strncpy(config->initial_watchpoints[config->initial_watchpoint_count++], argv[++i], 31);
+      }
     } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
       config->scale = atoi(argv[++i]);
       if (config->scale < 1 || config->scale > 50) {
@@ -267,6 +307,9 @@ static int parse_args(int argc, char **argv, EmulatorConfig *config) {
 }
 
 int main(int argc, char **argv) {
+#ifndef _WIN32
+  setvbuf(stdin, NULL, _IONBF, 0);
+#endif
   EmulatorConfig config;
   int parse_res = parse_args(argc, argv, &config);
   if (parse_res <= 0) {
@@ -277,6 +320,14 @@ int main(int argc, char **argv) {
   chip8_init(&chip8);
   if (!chip8_load_rom(&chip8, config.rom_path)) {
     return 1;
+  }
+
+  for (int i = 0; i < config.initial_breakpoint_count; i++) {
+    chip8_add_breakpoint(&chip8, config.initial_breakpoints[i]);
+    printf("[BREAKPOINT] Configured breakpoint at 0x%04X\n", config.initial_breakpoints[i]);
+  }
+  for (int i = 0; i < config.initial_watchpoint_count; i++) {
+    apply_watchpoint_str(&chip8, config.initial_watchpoints[i]);
   }
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) < 0) {
@@ -373,6 +424,7 @@ int main(int argc, char **argv) {
   printf("Hotkeys: [P/Space] Pause | [F5] Save State | [F9] Load State | [F10] Step | [Tab] Debug Pause | [F11] Fullscreen | [Esc] Exit\n");
 
   bool is_paused = config.debug;
+  uint16_t last_break_pc = 0xFFFF;
   if (config.debug) {
     char updated_title[200];
     snprintf(updated_title, sizeof(updated_title), "%s [DEBUG - PAUSED]", window_title);
@@ -436,9 +488,9 @@ int main(int argc, char **argv) {
     }
 
 #ifndef _WIN32
-    if (config.debug || is_paused) {
+    if (config.debug || is_paused || chip8.breakpoint_count > 0 || chip8.watchpoint_count > 0) {
       if (feof(stdin)) {
-        if (config.debug) running = false;
+        if (config.debug || is_paused) running = false;
       } else {
         struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN | POLLHUP, .revents = 0 };
         if (poll(&pfd, 1, 0) > 0) {
@@ -451,11 +503,16 @@ int main(int argc, char **argv) {
                 p--;
               }
               if (line_buf[0] == '\0' || strcmp(line_buf, "s") == 0 || strcmp(line_buf, "step") == 0) {
+                is_paused = true;
                 chip8_cycle(&chip8);
                 chip8_dump_debug(&chip8);
               } else if (strcmp(line_buf, "c") == 0 || strcmp(line_buf, "cont") == 0) {
                 is_paused = false;
                 printf("[DEBUG] Resumed execution.\n");
+              } else if (strcmp(line_buf, "p") == 0 || strcmp(line_buf, "pause") == 0) {
+                is_paused = true;
+                printf("[DEBUG] Paused execution.\n");
+                chip8_dump_debug(&chip8);
               } else if (strcmp(line_buf, "r") == 0 || strcmp(line_buf, "regs") == 0) {
                 chip8_dump_debug(&chip8);
               } else if (strncmp(line_buf, "m", 1) == 0 && (line_buf[1] == ' ' || line_buf[1] == '\0')) {
@@ -468,6 +525,21 @@ int main(int argc, char **argv) {
                   if (token) mem_len = (uint32_t)strtoul(token, NULL, 0);
                 }
                 chip8_dump_memory(&chip8, (uint16_t)mem_addr, (size_t)mem_len);
+              } else if (strncmp(line_buf, "b ", 2) == 0) {
+                uint16_t bp_addr = (uint16_t)strtoul(line_buf + 2, NULL, 0);
+                chip8_add_breakpoint(&chip8, bp_addr);
+                printf("[BREAKPOINT] Added breakpoint at 0x%04X\n", bp_addr);
+              } else if (strncmp(line_buf, "del ", 4) == 0 || strncmp(line_buf, "d ", 2) == 0) {
+                const char *addr_str = (strncmp(line_buf, "del ", 4) == 0) ? line_buf + 4 : line_buf + 2;
+                uint16_t bp_addr = (uint16_t)strtoul(addr_str, NULL, 0);
+                chip8_remove_breakpoint(&chip8, bp_addr);
+                printf("[BREAKPOINT] Removed breakpoint at 0x%04X\n", bp_addr);
+              } else if (strcmp(line_buf, "bl") == 0 || strcmp(line_buf, "info b") == 0) {
+                chip8_list_breakpoints(&chip8);
+              } else if (strncmp(line_buf, "watch ", 6) == 0) {
+                const char *target = line_buf + 6;
+                while (*target == ' ' || *target == '\t') target++;
+                apply_watchpoint_str(&chip8, target);
               } else if (strcmp(line_buf, "q") == 0 || strcmp(line_buf, "quit") == 0) {
                 running = false;
               } else if (strcmp(line_buf, "h") == 0 || strcmp(line_buf, "help") == 0) {
@@ -476,6 +548,10 @@ int main(int argc, char **argv) {
                 printf("  c, cont            Continue execution\n");
                 printf("  r, regs            Print register & stack status\n");
                 printf("  m <addr> [count]   Hex dump of memory at <addr>\n");
+                printf("  b <addr>           Add breakpoint at <addr>\n");
+                printf("  del <addr>         Remove breakpoint at <addr>\n");
+                printf("  bl                 List active breakpoints & watchpoints\n");
+                printf("  watch <reg/addr>   Add watchpoint (e.g. watch V3 or watch 0x200)\n");
                 printf("  q, quit            Exit emulator\n");
                 printf("-------------------------\n");
               } else {
@@ -495,7 +571,31 @@ int main(int argc, char **argv) {
     if (!is_paused) {
       // Run CPU cycles for this frame slice
       for (int i = 0; i < cycles_per_frame; i++) {
+        if (last_break_pc != chip8.pc && chip8_check_breakpoint(&chip8)) {
+          is_paused = true;
+          last_break_pc = chip8.pc;
+          printf("\n[BREAKPOINT] Hit address 0x%04X at cycle %llu\n",
+                 chip8.pc, (unsigned long long)chip8.cycle_count);
+          char updated_title[200];
+          snprintf(updated_title, sizeof(updated_title), "%s [BREAKPOINT 0x%04X]", window_title, chip8.pc);
+          SDL_SetWindowTitle(window, updated_title);
+          chip8_dump_debug(&chip8);
+          break;
+        }
+
         chip8_cycle(&chip8);
+        last_break_pc = 0xFFFF;
+
+        if (chip8_check_watchpoints(&chip8)) {
+          is_paused = true;
+          printf("\n[WATCHPOINT] %s at PC 0x%04X (cycle %llu)\n",
+                 chip8.watchpoint_hit_desc, chip8.pc, (unsigned long long)chip8.cycle_count);
+          char updated_title[200];
+          snprintf(updated_title, sizeof(updated_title), "%s [WATCHPOINT HIT]", window_title);
+          SDL_SetWindowTitle(window, updated_title);
+          chip8_dump_debug(&chip8);
+          break;
+        }
       }
 
       // Timer decrement at configured rate (standard 60 Hz)

@@ -142,6 +142,8 @@ void chip8_update_timers(Chip8 *chip8) {
 }
 
 void chip8_cycle(Chip8 *chip8) {
+  chip8->cycle_count++;
+
   /************************************************************
    * 1. FETCH STAGE
    ************************************************************/
@@ -591,4 +593,126 @@ void chip8_dump_memory(const Chip8 *chip8, uint16_t addr, size_t count) {
     printf("|\n");
   }
   printf("-------------------------------------------\n");
+}
+
+bool chip8_add_breakpoint(Chip8 *chip8, uint16_t addr) {
+  if (!chip8) return false;
+  for (int i = 0; i < chip8->breakpoint_count; i++) {
+    if (chip8->breakpoints[i].is_active && chip8->breakpoints[i].address == addr) {
+      return true; // already present
+    }
+  }
+  if (chip8->breakpoint_count < MAX_BREAKPOINTS) {
+    chip8->breakpoints[chip8->breakpoint_count].address = addr;
+    chip8->breakpoints[chip8->breakpoint_count].is_active = true;
+    chip8->breakpoint_count++;
+    return true;
+  }
+  return false;
+}
+
+bool chip8_remove_breakpoint(Chip8 *chip8, uint16_t addr) {
+  if (!chip8) return false;
+  for (int i = 0; i < chip8->breakpoint_count; i++) {
+    if (chip8->breakpoints[i].is_active && chip8->breakpoints[i].address == addr) {
+      chip8->breakpoints[i].is_active = false;
+      return true;
+    }
+  }
+  return false;
+}
+
+void chip8_list_breakpoints(const Chip8 *chip8) {
+  if (!chip8) return;
+  printf("\n--- Active Breakpoints ---\n");
+  int count = 0;
+  for (int i = 0; i < chip8->breakpoint_count; i++) {
+    if (chip8->breakpoints[i].is_active) {
+      printf("  #%d: Breakpoint at 0x%04X\n", count + 1, chip8->breakpoints[i].address);
+      count++;
+    }
+  }
+  if (count == 0) printf("  (No active breakpoints)\n");
+
+  printf("--- Active Watchpoints ---\n");
+  int wcount = 0;
+  for (int i = 0; i < chip8->watchpoint_count; i++) {
+    if (chip8->watchpoints[i].is_active) {
+      if (chip8->watchpoints[i].is_reg) {
+        printf("  #%d: Watch Register V%X (current=0x%02X)\n",
+               wcount + 1, chip8->watchpoints[i].reg_index, chip8->V[chip8->watchpoints[i].reg_index]);
+      } else {
+        printf("  #%d: Watch Memory [0x%03X] (current=0x%02X)\n",
+               wcount + 1, chip8->watchpoints[i].mem_addr, chip8->memory[chip8->watchpoints[i].mem_addr]);
+      }
+      wcount++;
+    }
+  }
+  if (wcount == 0) printf("  (No active watchpoints)\n");
+  printf("--------------------------\n");
+}
+
+bool chip8_check_breakpoint(Chip8 *chip8) {
+  if (!chip8) return false;
+  for (int i = 0; i < chip8->breakpoint_count; i++) {
+    if (chip8->breakpoints[i].is_active && chip8->breakpoints[i].address == chip8->pc) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool chip8_add_watchpoint_reg(Chip8 *chip8, uint8_t reg_idx) {
+  if (!chip8 || reg_idx > 15) return false;
+  if (chip8->watchpoint_count < MAX_WATCHPOINTS) {
+    Watchpoint *wp = &chip8->watchpoints[chip8->watchpoint_count++];
+    wp->is_reg = true;
+    wp->reg_index = reg_idx;
+    wp->last_value = chip8->V[reg_idx];
+    wp->is_active = true;
+    return true;
+  }
+  return false;
+}
+
+bool chip8_add_watchpoint_mem(Chip8 *chip8, uint16_t mem_addr) {
+  if (!chip8 || mem_addr >= 4096) return false;
+  if (chip8->watchpoint_count < MAX_WATCHPOINTS) {
+    Watchpoint *wp = &chip8->watchpoints[chip8->watchpoint_count++];
+    wp->is_reg = false;
+    wp->mem_addr = mem_addr;
+    wp->last_value = chip8->memory[mem_addr];
+    wp->is_active = true;
+    return true;
+  }
+  return false;
+}
+
+bool chip8_check_watchpoints(Chip8 *chip8) {
+  if (!chip8) return false;
+  for (int i = 0; i < chip8->watchpoint_count; i++) {
+    Watchpoint *wp = &chip8->watchpoints[i];
+    if (!wp->is_active) continue;
+
+    if (wp->is_reg) {
+      uint8_t curr = chip8->V[wp->reg_index];
+      if (curr != wp->last_value) {
+        snprintf(chip8->watchpoint_hit_desc, sizeof(chip8->watchpoint_hit_desc),
+                 "Register V%X changed: 0x%02X -> 0x%02X",
+                 wp->reg_index, wp->last_value, curr);
+        wp->last_value = curr;
+        return true;
+      }
+    } else {
+      uint8_t curr = chip8->memory[wp->mem_addr];
+      if (curr != wp->last_value) {
+        snprintf(chip8->watchpoint_hit_desc, sizeof(chip8->watchpoint_hit_desc),
+                 "Memory [0x%03X] changed: 0x%02X -> 0x%02X",
+                 wp->mem_addr, wp->last_value, curr);
+        wp->last_value = curr;
+        return true;
+      }
+    }
+  }
+  return false;
 }

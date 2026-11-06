@@ -304,6 +304,39 @@ static void test_disasm_and_debug() {
     TEST_ASSERT(true, "chip8_dump_debug & dump_memory run safely");
 }
 
+static void test_breakpoints_and_watchpoints() {
+    Chip8 c;
+    chip8_init(&c);
+
+    // Test Breakpoints
+    TEST_ASSERT(chip8_add_breakpoint(&c, 0x0250), "Add breakpoint 0x250");
+    TEST_ASSERT(chip8_add_breakpoint(&c, 0x0280), "Add breakpoint 0x280");
+    c.pc = 0x0200;
+    TEST_ASSERT(!chip8_check_breakpoint(&c), "PC 0x200 doesn't trigger breakpoint");
+    c.pc = 0x0250;
+    TEST_ASSERT(chip8_check_breakpoint(&c), "PC 0x250 triggers breakpoint");
+    TEST_ASSERT(chip8_remove_breakpoint(&c, 0x0250), "Remove breakpoint 0x250");
+    TEST_ASSERT(!chip8_check_breakpoint(&c), "PC 0x250 no longer triggers after remove");
+
+    // Test Register Watchpoints
+    c.V[3] = 0x10;
+    TEST_ASSERT(chip8_add_watchpoint_reg(&c, 3), "Add watchpoint for V3");
+    TEST_ASSERT(!chip8_check_watchpoints(&c), "No change initially");
+    c.V[3] = 0x25;
+    TEST_ASSERT(chip8_check_watchpoints(&c), "Watchpoint triggers on V3 mutation");
+    TEST_ASSERT(strstr(c.watchpoint_hit_desc, "Register V3") != NULL, "Watchpoint desc contains V3");
+
+    // Test Memory Watchpoints
+    c.memory[0x350] = 0xAA;
+    TEST_ASSERT(chip8_add_watchpoint_mem(&c, 0x0350), "Add watchpoint for memory 0x350");
+    TEST_ASSERT(!chip8_check_watchpoints(&c), "No change initially on memory");
+    c.memory[0x350] = 0xBB;
+    TEST_ASSERT(chip8_check_watchpoints(&c), "Watchpoint triggers on memory 0x350 mutation");
+    TEST_ASSERT(strstr(c.watchpoint_hit_desc, "0x350") != NULL, "Watchpoint desc contains 0x350");
+
+    chip8_list_breakpoints(&c);
+}
+
 int main(void) {
     printf("=========================================\n");
     printf("Running Byte8 Emulator Opcode Unit Tests\n");
@@ -318,6 +351,7 @@ int main(void) {
     test_savestate();
     test_legacy_sys();
     test_disasm_and_debug();
+    test_breakpoints_and_watchpoints();
 
     printf("Results: %d / %d tests passed\n", passed_tests, total_tests);
     if (passed_tests == total_tests) {
