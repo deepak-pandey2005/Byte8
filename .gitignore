@@ -2,6 +2,7 @@
 chip8
 compiler
 disassembler
+b8c
 
 # Object files and libraries
 *.o

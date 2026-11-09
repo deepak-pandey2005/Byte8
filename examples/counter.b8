@@ -1,0 +1,60 @@
+// Counter and Bounce Demo in Byte8-C
+sprite ball = [ 0x3C, 0x7E, 0xFF, 0xFF, 0x7E, 0x3C ];
+
+byte x = 10;
+byte y = 5;
+byte dx = 1;
+byte dy = 1;
+byte count = 0;
+
+void beep() {
+    sound_timer = 3;
+}
+
+void main() {
+    cls();
+
+    while (1) {
+        cls();
+
+        // Draw counter digit in corner
+        draw_font(2, 2, count);
+
+        // Draw bouncing ball sprite (6x6)
+        draw(x, y, ball, 6);
+
+        // Update physics
+        if (dx == 1) {
+            x += 1;
+            if (x >= 56) {
+                dx = 0;
+                beep();
+                count += 1;
+            }
+        } else {
+            x -= 1;
+            if (x <= 2) {
+                dx = 1;
+                beep();
+                count += 1;
+            }
+        }
+
+        if (dy == 1) {
+            y += 1;
+            if (y >= 24) {
+                dy = 0;
+                beep();
+            }
+        } else {
+            y -= 1;
+            if (y <= 2) {
+                dy = 1;
+                beep();
+            }
+        }
+
+        // Limit loop to 60 FPS
+        sync();
+    }
+}

@@ -13,6 +13,7 @@ LDFLAGS = -lSDL2 -lm
 TARGET = chip8
 COMPILER_TARGET = compiler
 DISASM_TARGET = disassembler
+B8C_TARGET = b8c
 TEST_TARGET = tests/test_opcodes
 
 # Source files
@@ -22,10 +23,10 @@ SRCS = src/main.c src/chip8.c
 OBJS = $(SRCS:.c=.o)
 
 # Default rule (runs when you just type 'make')
-all: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
+all: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(B8C_TARGET)
 
 # Rule to run the automated test suite
-test: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
+test: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(B8C_TARGET)
 	@./tests/run_tests.sh
 
 # Rule to build the assembler/compiler
@@ -35,6 +36,10 @@ $(COMPILER_TARGET): compiler.c
 # Rule to build the disassembler
 $(DISASM_TARGET): disassembler.c
 	$(CC) $(CFLAGS) disassembler.c -o $(DISASM_TARGET)
+
+# Rule to build Byte8 C-like high level compiler
+$(B8C_TARGET): b8c.c
+	$(CC) $(CFLAGS) b8c.c -o $(B8C_TARGET)
 
 # Rule to link the executable
 $(TARGET): $(OBJS)
@@ -46,7 +51,7 @@ $(TARGET): $(OBJS)
 
 # Clean rule to remove compiled binaries and object files
 clean:
-	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(TEST_TARGET)
+	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(B8C_TARGET) $(TEST_TARGET)
 
 # AddressSanitizer & UndefinedBehaviorSanitizer memory safety target
 asan:
