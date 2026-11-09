@@ -13,7 +13,6 @@ LDFLAGS = -lSDL2 -lm
 TARGET = chip8
 COMPILER_TARGET = compiler
 DISASM_TARGET = disassembler
-WASM_TARGET = web/chip8.wasm
 TEST_TARGET = tests/test_opcodes
 
 # Source files
@@ -23,7 +22,7 @@ SRCS = src/main.c src/chip8.c
 OBJS = $(SRCS:.c=.o)
 
 # Default rule (runs when you just type 'make')
-all: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(WASM_TARGET)
+all: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
 
 # Rule to run the automated test suite
 test: $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET)
@@ -37,10 +36,6 @@ $(COMPILER_TARGET): compiler.c
 $(DISASM_TARGET): disassembler.c
 	$(CC) $(CFLAGS) disassembler.c -o $(DISASM_TARGET)
 
-# Rule to build WebAssembly binary
-$(WASM_TARGET): web/chip8_wasm.c src/chip8.h
-	clang --target=wasm32 -nostdlib -O3 -Wl,--no-entry -Wl,--export-all -Wl,--allow-undefined -o $(WASM_TARGET) web/chip8_wasm.c
-
 # Rule to link the executable
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)
@@ -51,7 +46,7 @@ $(TARGET): $(OBJS)
 
 # Clean rule to remove compiled binaries and object files
 clean:
-	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(WASM_TARGET) $(TEST_TARGET)
+	rm -f $(OBJS) $(TARGET) $(COMPILER_TARGET) $(DISASM_TARGET) $(TEST_TARGET)
 
 # AddressSanitizer & UndefinedBehaviorSanitizer memory safety target
 asan:
@@ -59,4 +54,4 @@ asan:
 	CFLAGS="$(CFLAGS) -fsanitize=address,undefined -g" LDFLAGS="$(LDFLAGS) -fsanitize=address,undefined" $(MAKE) test
 
 # Phony targets (prevents conflicts if files named 'all' or 'clean' exist)
-.PHONY: all clean compiler disassembler wasm test asan
+.PHONY: all clean compiler disassembler test asan

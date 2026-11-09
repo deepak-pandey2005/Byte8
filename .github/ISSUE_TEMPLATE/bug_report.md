@@ -15,7 +15,6 @@ A clear and concise description of what the bug is.
 - [ ] SDL2 Desktop Runner (`src/main.c`)
 - [ ] Assembler Compiler (`compiler.c`)
 - [ ] Disassembler (`disassembler.c`)
-- [ ] Web / WebAssembly Player (`web/`)
 - [ ] Test Suite (`tests/`)
 
 ### To Reproduce

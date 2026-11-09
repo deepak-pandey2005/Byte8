@@ -18,7 +18,6 @@ A clear and concise description of what you want to happen.
 - [ ] Debugger / CLI Tools
 - [ ] Assembler / Preprocessor
 - [ ] Disassembler
-- [ ] WebAssembly & Web UI
 - [ ] Audio / Visual Effects
 
 ### Additional Context or Implementation Ideas

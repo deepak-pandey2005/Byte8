@@ -11,7 +11,7 @@ cd "$ROOT_DIR"
 echo "[1/5] Building all project targets..."
 make clean > /dev/null
 make all > /dev/null
-echo "  -> Targets compiled successfully: chip8, compiler, disassembler, web/chip8.wasm"
+echo "  -> Targets compiled successfully: chip8, compiler, disassembler"
 
 echo ""
 echo "[2/5] Running Emulator Opcode Unit Tests..."
